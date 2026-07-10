@@ -19,6 +19,12 @@
 | REST API (Express) | ✅ Complete — verify, status, webhooks, health |
 | Proof caching | ✅ Complete — checks PaymentVerifier contract |
 | Background polling | ✅ Complete — polls DA Layer after submission |
+| API key authentication | ✅ Complete — X-API-Key header on all protected routes |
+| Subscription tiers | ✅ Complete — free (10/min), paid (100/min), pro (unlimited) |
+| Admin key management | ✅ Complete — create/list/delete keys (pro-only) |
+| Dashboard | ✅ Complete — HTML dashboard at /dashboard |
+| Persistent storage | ✅ Complete — JSON files in data/ |
+| Flare mainnet contract | ✅ Complete — PaymentVerifierMainnet.sol |
 | Dockerfile | ✅ Complete |
 
 ## Tech Stack & Dependencies

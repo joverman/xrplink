@@ -1,9 +1,7 @@
-import { config } from "./config.js";
 import { store } from "./store.js";
-import { Attestation } from "./types.js";
 
 export async function deliverWebhooks(attestationId: string) {
-  const attestation = store.get(attestationId);
+  const attestation = store.getAttestation(attestationId);
   if (!attestation) return;
 
   const hooks = store.getWebhooksForAttestation(attestationId);
@@ -17,26 +15,22 @@ export async function deliverWebhooks(attestationId: string) {
     status: attestation.status,
     verifiedTxHash: attestation.verifiedTxHash,
     proof: attestation.proof
-      ? {
-          response: attestation.proof.response,
-          merkleProofEntries: attestation.proof.proof.length,
-        }
+      ? { response: attestation.proof.response, merkleProofEntries: attestation.proof.proof.length }
       : null,
   };
 
   const results = await Promise.allSettled(
-    hooks.map((hook) => deliverWebhook(hook.url, payload))
+    hooks.map((hook) => deliver(hook.url, payload))
   );
 
   for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    if (result.status === "rejected") {
-      console.error(`Webhook delivery failed for ${hooks[i].url}:`, result.reason);
+    if (results[i].status === "rejected") {
+      console.error(`Webhook delivery failed for ${hooks[i].url}:`, results[i].reason);
     }
   }
 }
 
-async function deliverWebhook(url: string, payload: unknown) {
+async function deliver(url: string, payload: unknown) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
 
@@ -47,7 +41,6 @@ async function deliverWebhook(url: string, payload: unknown) {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-
     if (!response.ok) {
       console.warn(`Webhook ${url} returned ${response.status}`);
     }

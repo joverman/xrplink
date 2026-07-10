@@ -1,9 +1,11 @@
+export type Tier = "free" | "paid" | "pro";
+
 export type AttestationStatus =
-  | "pending"       // submitted to FdcHub, waiting for round
-  | "ready"         // proof available from DA Layer
-  | "verified"      // verified on-chain via PaymentVerifier
-  | "failed"        // attestation failed consensus
-  | "not_found";    // no proof found after polling
+  | "pending"
+  | "ready"
+  | "verified"
+  | "failed"
+  | "not_found";
 
 export interface Attestation {
   id: string;
@@ -47,6 +49,15 @@ export interface ProofResponse {
     };
   };
   proof: string[];
+}
+
+export interface ApiKey {
+  key: string;
+  name: string;
+  tier: Tier;
+  active: boolean;
+  usageCount: number;
+  createdAt: string;
 }
 
 export interface Webhook {
