@@ -12,6 +12,7 @@
     "submit": "tsx scripts/submit-request.ts",
     "verify": "tsx scripts/verify-proof.ts",
     "start": "tsx src/index.ts",
+    "mcp": "tsx src/mcp-server.ts",
     "deploy": "tsx scripts/deploy-verifier.ts"
   },
   "main": "index.js",
@@ -31,6 +32,7 @@
   },
   "dependencies": {
     "@flarenetwork/flare-periphery-contracts": "^0.1.52",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "express": "^5.2.1"
   }
 }

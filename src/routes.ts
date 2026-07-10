@@ -4,6 +4,7 @@ import { config, activeNetwork } from "./config.js";
 import * as fdc from "./fdc-service.js";
 import { deliverWebhooks } from "./webhook-service.js";
 import { requireApiKey } from "./middleware.js";
+import { whiteLabel } from "./white-label.js";
 import {
   AttestationStatus, VerifyResponse, StatusResponse,
   RegisterWebhookBody, ApiError, Tier,
@@ -20,11 +21,16 @@ function isHexTxHash(v: string): boolean {
  * Public — no API key required.
  */
 router.get("/health", (_req: Request, res: Response) => {
+  const wl = whiteLabel.get();
   res.json({
     status: "ok",
+    brand: wl.brandName,
+    companyUrl: wl.companyUrl,
     network: config.network,
     paymentVerifier: config.paymentVerifierAddress || "not configured",
     sourceId: activeNetwork.sourceId,
+    chainId: activeNetwork.chainId,
+    fdcHub: activeNetwork.fdcHub,
     uptime: process.uptime(),
   });
 });
@@ -34,66 +40,51 @@ router.get("/health", (_req: Request, res: Response) => {
  * Public — simple HTML status page.
  */
 router.get("/dashboard", (_req: Request, res: Response) => {
+  const wl = whiteLabel.get();
   const attestations = store.listAttestations();
   const apiKeys = store.listApiKeys();
 
   let apiKeyRows = apiKeys.map((k) => `
-    <tr>
-      <td><code>${k.key.slice(0, 16)}...</code></td>
-      <td>${k.name}</td>
-      <td><span class="tier ${k.tier}">${k.tier}</span></td>
-      <td>${k.active ? "✅" : "❌"}</td>
-      <td>${k.usageCount}</td>
-      <td>${new Date(k.createdAt).toLocaleString()}</td>
-    </tr>
+    <tr><td><code>${k.key.slice(0, 16)}...</code></td><td>${k.name}</td>
+    <td><span class="tier ${k.tier}">${k.tier}</span></td><td>${k.active ? "✅" : "❌"}</td>
+    <td>${k.usageCount}</td><td>${new Date(k.createdAt).toLocaleString()}</td></tr>
   `).join("");
 
   let attRows = attestations.slice(0, 50).map((a) => `
-    <tr>
-      <td><code>${a.id.slice(0, 8)}</code></td>
-      <td><code>${a.txHash.slice(0, 16)}...</code></td>
-      <td><span class="status ${a.status}">${a.status}</span></td>
-      <td>${a.roundId ?? "—"}</td>
-      <td>${a.verifiedTxHash ? `<code>${a.verifiedTxHash.slice(0, 16)}...</code>` : "—"}</td>
-      <td>${new Date(a.createdAt).toLocaleString()}</td>
-    </tr>
+    <tr><td><code>${a.id.slice(0, 8)}</code></td><td><code>${a.txHash.slice(0, 16)}...</code></td>
+    <td><span class="status ${a.status}">${a.status}</span></td><td>${a.roundId ?? "—"}</td>
+    <td>${a.verifiedTxHash ? `<code>${a.verifiedTxHash.slice(0, 16)}...</code>` : "—"}</td>
+    <td>${new Date(a.createdAt).toLocaleString()}</td></tr>
   `).join("");
 
-  res.type("html").send(`
-<!DOCTYPE html>
+  res.type("html").send(`<!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>XRPLink Dashboard</title>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>${wl.brandName} Dashboard</title>
+${wl.brandName !== "XRPLink" ? whiteLabel.injectCss() : ""}
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 2rem; }
-  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-  h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; color: #94a3b8; }
-  p.sub { color: #64748b; font-size: 0.85rem; margin-bottom: 1rem; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-  th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #1e293b; }
-  th { color: #64748b; font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.05em; }
-  code { font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 0.75rem; background: #1e293b; padding: 0.15rem 0.35rem; border-radius: 3px; }
-  .status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
-  .status.verified { background: #065f46; color: #6ee7b7; }
-  .status.pending  { background: #1e3a5f; color: #93c5fd; }
-  .status.ready    { background: #5b3a1e; color: #fcd34d; }
-  .status.failed, .status.not_found { background: #5f1e1e; color: #fca5a5; }
-  .tier { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
-  .tier.free { background: #1e293b; color: #94a3b8; }
-  .tier.paid { background: #1e3a5f; color: #60a5fa; }
-  .tier.pro  { background: #3b1e5f; color: #c084fc; }
-  .stats { display: flex; gap: 1rem; margin: 1rem 0; }
-  .stat-card { background: #1e293b; border-radius: 8px; padding: 1rem; flex: 1; }
-  .stat-card .num { font-size: 1.5rem; font-weight: 700; }
-  .stat-card .label { font-size: 0.75rem; color: #64748b; margin-top: 0.25rem; }
-</style>
-</head>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;padding:2rem}
+h2{font-size:1.1rem;margin:1.5rem 0 0.5rem;color:#94a3b8}
+.sub{color:#64748b;font-size:0.85rem;margin-bottom:1rem}
+table{width:100%;border-collapse:collapse;font-size:0.8rem}
+th,td{text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid #1e293b}
+th{color:#64748b;font-weight:600;text-transform:uppercase;font-size:0.7rem;letter-spacing:0.05em}
+code{font-family:"JetBrains Mono","Fira Code",monospace;font-size:0.75rem;background:#1e293b;padding:0.15rem 0.35rem;border-radius:3px}
+.status,.tier{display:inline-block;padding:0.15rem 0.5rem;border-radius:4px;font-size:0.7rem;font-weight:600}
+.status.verified{background:#065f46;color:#6ee7b7}.status.pending{background:#1e3a5f;color:#93c5fd}
+.status.ready{background:#5b3a1e;color:#fcd34d}.status.failed,.status.not_found{background:#5f1e1e;color:#fca5a5}
+.tier.free{background:#1e293b;color:#94a3b8}.tier.paid{background:#1e3a5f;color:#60a5fa}.tier.pro{background:#3b1e5f;color:#c084fc}
+.stats{display:flex;gap:1rem;margin:1rem 0}
+.stat-card{background:#1e293b;border-radius:8px;padding:1rem;flex:1}
+.stat-card .num{font-size:1.5rem;font-weight:700}
+.stat-card .label{font-size:0.75rem;color:#64748b;margin-top:0.25rem}
+</style></head>
 <body>
-<h1>XRPLink</h1>
-<p class="sub">Network: ${config.network} · Verifier: ${config.paymentVerifierAddress ? "✅ configured" : "⚠️ not set"}</p>
+<div class="brand-header">
+  <h1>${wl.logoUrl ? `<img src="${wl.logoUrl}" class="brand-logo">` : ""}${wl.brandName}</h1>
+  <p>Network: ${config.network} · ${config.paymentVerifierAddress ? "✅ Verifier configured" : "⚠️ Verifier not set"}</p>
+</div>
 
 <div class="stats">
   <div class="stat-card"><div class="num">${attestations.length}</div><div class="label">Total Attestations</div></div>
@@ -104,13 +95,12 @@ router.get("/dashboard", (_req: Request, res: Response) => {
 
 <h2>API Keys</h2>
 <table><thead><tr><th>Key</th><th>Name</th><th>Tier</th><th>Active</th><th>Uses</th><th>Created</th></tr></thead>
-<tbody>${apiKeyRows || "<tr><td colspan='6' style='color:#64748b'>No API keys yet</td></tr>"}</tbody></table>
+<tbody>${apiKeyRows || '<tr><td colspan="6" style="color:#64748b">No API keys yet</td></tr>'}</tbody></table>
 
 <h2>Recent Attestations</h2>
 <table><thead><tr><th>ID</th><th>TX Hash</th><th>Status</th><th>Round</th><th>Verified TX</th><th>Created</th></tr></thead>
-<tbody>${attRows || "<tr><td colspan='6' style='color:#64748b'>No attestations yet</td></tr>"}</tbody></table>
-</body>
-</html>`);
+<tbody>${attRows || '<tr><td colspan="6" style="color:#64748b">No attestations yet</td></tr>'}</tbody></table>
+</body></html>`);
 });
 
 // --- Authenticated routes below ---
@@ -222,6 +212,23 @@ router.post("/api/v1/webhooks", requireApiKey, (req: Request, res: Response) => 
   }
   const webhook = store.registerWebhook(url, attestationId || null);
   return res.status(201).json({ id: webhook.id, url: webhook.url, attestationId: webhook.attestationId });
+});
+
+/** GET /api/v1/admin/white-label — Get current white-label config (pro only) */
+router.get("/api/v1/admin/white-label", requireApiKey, (req: Request, res: Response) => {
+  if ((req as any).apiKey.tier !== "pro") {
+    return res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" } satisfies ApiError);
+  }
+  res.json(whiteLabel.get());
+});
+
+/** PUT /api/v1/admin/white-label — Update white-label config (pro only) */
+router.put("/api/v1/admin/white-label", requireApiKey, (req: Request, res: Response) => {
+  if ((req as any).apiKey.tier !== "pro") {
+    return res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" } satisfies ApiError);
+  }
+  const updated = whiteLabel.update(req.body);
+  res.json(updated);
 });
 
 // --- Admin routes ---
