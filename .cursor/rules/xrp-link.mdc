@@ -1,0 +1,65 @@
+# XRPLink — Cursor/Opencode Rules
+
+## Project
+XRPLink is an XRP data attestation layer for Flare's FDC protocol. Current phase: technical validation on Coston2 testnet.
+
+## Coding Conventions
+
+### TypeScript
+- Use **CommonJS** (`require()` / `module.exports`) — package.json has `"type": "commonjs"`. DO NOT use ESM `import` syntax in scripts unless converting the whole project
+- Use **ethers v5 API** — the installed version is 5.8.0 (from hardhat-deploy deps):
+  - `const { ethers } = require("ethers")`
+  - `new ethers.providers.JsonRpcProvider(url)`
+  - `ethers.utils.formatEther()`
+  - `ethers.utils.parseEther()`
+  - `const wallet = new ethers.Wallet(pk, provider)`
+  - `new ethers.Contract(address, abi, wallet)`
+- Use `require("dotenv").config()` at top of scripts
+- Use `async function main() { ... }; main().catch(...)` pattern for entry points
+- Use template strings for logging: `` console.log(`Value: ${x}`) ``
+
+### Solidity
+- Use Solidity 0.8.25 with EVM version `cancun`
+- Import Flare contracts from `@flarenetwork/flare-periphery-contracts/coston2/`
+- XRPPayment proof verification pattern:
+  ```solidity
+  import {ContractRegistry} from "@flarenetwork/flare-periphery-contracts/coston2/ContractRegistry.sol";
+  import {IFdcVerification} from "@flarenetwork/flare-periphery-contracts/coston2/IFdcVerification.sol";
+  import {IXRPPayment} from "@flarenetwork/flare-periphery-contracts/coston2/IXRPPayment.sol";
+
+  function isProofValid(IXRPPayment.Proof memory _proof) public view returns (bool) {
+      IFdcVerification fdc = ContractRegistry.getFdcVerification();
+      return fdc.verifyXRPPayment(_proof);
+  }
+  ```
+
+### Hardhat
+- Networks defined: `coston2`, `flare`
+- Accounts from `PRIVATE_KEY` env var (not currently in config — needs updating)
+- Compiler: 0.8.25, optimizer on (200 runs), EVM cancun
+
+## Architectural Guidelines
+
+1. **Layer isolation** — Never mix FDC protocol calls with business logic in the same contract. PaymentVerifier handles verification; business contracts call PaymentVerifier
+2. **MIC commitment** — In production, run your own verifier service. The MIC must be computed from real fetched data, not guessed
+3. **Caching** — Once an attestation round completes, proofs are permanent. Cache results by transaction hash to avoid duplicate fees
+4. **Round polling** — FDC rounds are 90 seconds. Any API must be async: accept request → submit to FdcHub → poll DA Layer → respond when ready
+5. **Fee pass-through** — Attestation fees are real FLR costs. Decide: bundled in subscription or per-verification micropayment
+
+## Network Constants (Coston2)
+- FdcHub: `0x48aC463d7975828989331F4De43341627b9c5f1D`
+- FdcVerification: `0x906507E0B64bcD494Db73bd0459d1C667e14B933`
+- ContractRegistry: `0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019`
+- DA Layer: `https://ctn2-data-availability.flare.network`
+- Verifier: `https://fdc-verifiers-testnet.flare.network`
+- Public API Key: `00000000-0000-0000-0000-000000000000`
+- FIRST_VOTING_ROUND_START: `1658430000` (NOT 1658429955 — that's for Songbird/Coston)
+- Voting epoch: 90 seconds
+- RPC: `https://coston2-api.flare.network/ext/C/rpc`
+
+## Common Gotchas
+- ❌ `new ethers.JsonRpcProvider()` is v6 — use `new ethers.providers.JsonRpcProvider()` (v5)
+- ❌ `import { ethers } from "ethers"` is ESM — use `const { ethers } = require("ethers")`
+- ❌ DA Layer URL `da-layer-coston2.flare.network` doesn't resolve — use `ctn2-data-availability.flare.network`
+- ❌ FIRST_VOTING_ROUND `1658429955` gives wrong round IDs on Coston2 — use `1658430000`
+- ❌ verifyXRPPayment is the correct function name on FdcVerification (not verifyPayment for XRP-specific)
