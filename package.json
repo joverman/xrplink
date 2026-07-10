@@ -11,6 +11,7 @@
     "prepare": "tsx scripts/prepare-request.ts",
     "submit": "tsx scripts/submit-request.ts",
     "verify": "tsx scripts/verify-proof.ts",
+    "start": "tsx src/index.ts",
     "deploy": "tsx scripts/deploy-verifier.ts"
   },
   "main": "index.js",
@@ -19,13 +20,17 @@
   "license": "ISC",
   "type": "module",
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^26.1.1",
+    "@types/uuid": "^10.0.0",
     "dotenv": "^17.4.2",
     "hardhat": "^3.9.1",
     "tsx": "^4.23.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "uuid": "^14.0.1"
   },
   "dependencies": {
-    "@flarenetwork/flare-periphery-contracts": "^0.1.52"
+    "@flarenetwork/flare-periphery-contracts": "^0.1.52",
+    "express": "^5.2.1"
   }
 }

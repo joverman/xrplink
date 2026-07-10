@@ -16,6 +16,10 @@
 | PaymentVerifier.sol deployed to Coston2 | ✅ Complete (`0x6c3443ba8A11666BCEd0dA2f40c378a47b620cfc`) |
 | On-chain proof verification | ✅ Complete — payment count: 1 |
 | End-to-end pipeline validated | ✅ **Phase 0 Complete** |
+| REST API (Express) | ✅ Complete — verify, status, webhooks, health |
+| Proof caching | ✅ Complete — checks PaymentVerifier contract |
+| Background polling | ✅ Complete — polls DA Layer after submission |
+| Dockerfile | ✅ Complete |
 
 ## Tech Stack & Dependencies
 

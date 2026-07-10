@@ -8,6 +8,6 @@
     "skipLibCheck": true,
     "outDir": "./dist"
   },
-  "include": ["./scripts/**/*.ts", "./hardhat.config.ts"],
+  "include": ["./src/**/*.ts", "./scripts/**/*.ts", "./hardhat.config.ts"],
   "files": ["./hardhat.config.ts"]
 }
