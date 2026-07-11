@@ -1,7 +1,7 @@
 {
-  "name": "xrp-link-test",
+  "name": "xrplink",
   "version": "0.1.0",
-  "description": "XRPLink - XRP Payment attestation on Flare FDC proof of concept",
+  "description": "XRPLink - XRP Payment attestation on Flare FDC",
   "scripts": {
     "test": "npx hardhat test",
     "compile": "npx hardhat compile",
@@ -22,11 +22,11 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/joverman/xrp-link-test.git"
+    "url": "git+https://github.com/joverman/xrplink.git"
   },
-  "homepage": "https://github.com/joverman/xrp-link-test#readme",
+  "homepage": "https://github.com/joverman/xrplink#readme",
   "bugs": {
-    "url": "https://github.com/joverman/xrp-link-test/issues"
+    "url": "https://github.com/joverman/xrplink/issues"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",

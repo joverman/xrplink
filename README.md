@@ -11,7 +11,7 @@
 
 ```bash
 git clone <repo-url>
-cd xrp-link-test
+cd xrplink
 npm install
 cp .env.example .env
 # Edit .env with your private key and API key

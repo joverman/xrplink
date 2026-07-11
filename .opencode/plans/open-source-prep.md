@@ -106,7 +106,7 @@ Add row at bottom:
 ## Quick Start
 ```bash
 git clone <repo-url>
-cd xrp-link-test
+cd xrplink
 npm install
 cp .env.example .env
 # Edit .env with your test keys
