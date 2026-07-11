@@ -2,7 +2,6 @@
   "name": "xrp-link-test",
   "version": "0.1.0",
   "description": "XRPLink - XRP Payment attestation on Flare FDC proof of concept",
-  "private": true,
   "scripts": {
     "test": "npx hardhat test",
     "compile": "npx hardhat compile",
@@ -17,10 +16,18 @@
     "deploy": "tsx scripts/deploy-verifier.ts"
   },
   "main": "index.js",
-  "keywords": [],
+  "keywords": ["xrp", "flare", "fdc", "attestation", "blockchain", "mcp"],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joverman/xrp-link-test.git"
+  },
+  "homepage": "https://github.com/joverman/xrp-link-test#readme",
+  "bugs": {
+    "url": "https://github.com/joverman/xrp-link-test/issues"
+  },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
     "@types/express": "^5.0.6",

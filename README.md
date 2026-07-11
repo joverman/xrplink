@@ -1,11 +1,30 @@
+> **⚠️ Alpha Software** — XRPLink is in active development. The pipeline is validated on
+> Coston2 testnet. Mainnet deployment and production use pending. Use at your own risk.
+
 # XRPLink — XRP Payment Attestation on Flare FDC
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **XRP data attestation layer for the Flare Network.** XRPLink wraps Flare's enshrined FDC (Flare Data Connector) protocol into a simple API + smart contract library, letting developers verify XRP payments and use XRP data on Flare without managing attestation rounds, Merkle proofs, or DA Layer interactions.
+
+## Quick Start
+
+```bash
+git clone <repo-url>
+cd xrp-link-test
+npm install
+cp .env.example .env
+# Edit .env with your private key and API key
+npm run start:rest
+curl http://localhost:3000/health
+```
+
+Then open `http://localhost:3000/dashboard` in your browser.
 
 ## Project Status
 
 | Milestone | Status |
-|---|---|---|
+|---|---|
 | Product sketch (v0.1) | ✅ Complete |
 | Project scaffolding (Hardhat + scripts) | ✅ Complete |
 | Coston2 wallet generated & funded (100 test FLR) | ✅ Complete |
@@ -25,18 +44,58 @@
 | Dashboard | ✅ Complete — HTML dashboard at /dashboard |
 | Persistent storage | ✅ Complete — JSON files in data/ |
 | Flare mainnet contract | ✅ Complete — PaymentVerifierMainnet.sol |
-| Dockerfile | ✅ Complete |
+| MCP Server (agent-native) | ✅ Complete — 5 tools, 5 resources, 4 prompts |
+| Hardhat test suite | ✅ Complete — 8 tests passing |
+| Open source release | ✅ Complete — MIT license |
+
+## Server Modes
+
+| Command | What starts |
+|---------|-------------|
+| `npm start` | MCP server (stdio) + REST API |
+| `npm run start:mcp` | MCP server only |
+| `npm run start:rest` | REST API only |
 
 ## Tech Stack & Dependencies
 
 | Dep | Version | Purpose |
 |---|---|---|
 | `hardhat` | ^3.9.1 | Solidity dev environment |
-| `ethers` | 5.8.0 | EVM interaction (via hardhat-deploy) |
+| `ethers` | 5.8.0 | EVM interaction |
 | `tsx` | ^4.23.0 | TypeScript script runner |
 | `dotenv` | ^17.4.2 | .env config |
 | `xrpl` | via npm | XRP Ledger testnet interaction |
-| `@flarenetwork/flare-periphery-contracts` | ^0.1.52 | FDC protocol interfaces (IXRPPayment, IFdcVerification, ContractRegistry) |
+| `@flarenetwork/flare-periphery-contracts` | ^0.1.52 | FDC protocol interfaces |
+| `@modelcontextprotocol/sdk` | ^1.29.0 | MCP server framework |
+| `express` | ^5.2.1 | HTTP API server |
+
+## API Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | Public | Server status and network info |
+| `GET` | `/dashboard` | Public | HTML dashboard |
+| `POST` | `/api/v1/verify/xrp-payment` | API key | Submit txHash for attestation |
+| `GET` | `/api/v1/status/:id` | API key | Check attestation by UUID |
+| `GET` | `/api/v1/status-by-tx/:txHash` | API key | Check attestation by txHash |
+| `POST` | `/api/v1/webhooks` | API key | Register webhook callback |
+| `GET\|PUT` | `/api/v1/admin/white-label` | Pro key | Manage branding |
+| `GET\|POST\|DELETE` | `/api/v1/admin/keys` | Pro key | Manage API keys |
+| `GET` | `/mcp/resources` | Public | List MCP resources |
+| `GET` | `/mcp/prompts` | Public | List MCP prompts |
+| `GET` | `/mcp` | Public | SSE event stream |
+
+## MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `verify_xrp_payment` | Submit txHash for FDC attestation |
+| `get_attestation_status` | Check attestation by UUID |
+| `lookup_attestation_by_tx` | Find attestation by txHash |
+| `get_attestation_by_round` | List attestations by round ID |
+| `get_server_info` | Server + network info |
+
+Connect via stdio: `npm run start:mcp`
 
 ## Network Configuration
 
@@ -51,9 +110,9 @@
 | Verifier API | `https://fdc-verifiers-testnet.flare.network` |
 | DA Layer | `https://ctn2-data-availability.flare.network` |
 | Public API Key | `00000000-0000-0000-0000-000000000000` |
-| FIRST_VOTING_ROUND | `1658430000` (CRITICAL: not 1658429955) |
+| FIRST_VOTING_ROUND | `1658430000` |
 | Voting duration | 90 seconds |
-| Faucet | `https://faucet.flare.network/coston2` (browser, requires captcha) |
+| Faucet | `https://faucet.flare.network/coston2` |
 
 ### Flare Mainnet
 | Param | Value |
@@ -62,39 +121,7 @@
 | Chain ID | 14 |
 | FDC source ID | `XRP` (not `testXRP`) |
 
-### XRP Testnet
-| Param | Value |
-|---|---|
-| RPC | `wss://s.altnet.rippletest.net:51233` |
-| Wallet funded | `rPfi6ALJ7wC5eBwfnZB7Uz2YfbrVTeAA5p` |
-
-## Setup & Run
-
-```bash
-cd ~/mycode/xrp-link-test
-npm install
-
-# Set up .env (copy from .env.example)
-# PRIVATE_KEY and XRP_TX_HASH are already populated
-
-# Generate a new wallet
-npm run wallet
-
-# Check balance
-npm run check-balance  # or: npx tsx scripts/check-balance.ts
-
-# Send a new XRP testnet transaction
-npx tsx scripts/send-xrp-test.ts
-
-# Prepare attestation request (uses verifier API)
-npx tsx scripts/prepare-request.ts
-
-# Submit attestation to FdcHub
-npx tsx scripts/submit-request.ts
-
-# After ~90-180s, verify
-npx tsx scripts/verify-proof.ts <roundId>
-```
+Set `FLARE_NETWORK=flare` in `.env` to switch.
 
 ## Architecture
 
@@ -130,9 +157,13 @@ npx tsx scripts/verify-proof.ts <roundId>
 6. DA Layer serves attestation response + Merkle proof
 7. Smart contract verifies proof against onchain Merkle root via FdcVerification
 
-## Key Decisions
+## Contributing
 
-- **XRPPayment attestation type** used instead of generic Payment — gives direct access to memo data, source r-address as string, and destination tags
-- **Coston2 testnet first** — validate pipeline before mainnet deployment
-- **xv5 compatibility** — ethers v5 still required (installed via hardhat-deploy dependency); scripts use `require("ethers")` with `new ethers.providers.JsonRpcProvider()`
-- **CommonJS modules** — `"type": "commonjs"` in package.json; scripts use `require()` not `import`
+See [CONTRIBUTING.md](CONTRIBUTING.md). All contributions welcome —
+bug fixes, feature requests, docs improvements, and test additions.
+
+XRPLink is open source (MIT) and built for the Flare ecosystem.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
