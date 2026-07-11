@@ -11,8 +11,9 @@
     "prepare": "tsx scripts/prepare-request.ts",
     "submit": "tsx scripts/submit-request.ts",
     "verify": "tsx scripts/verify-proof.ts",
-    "start": "tsx src/index.ts",
-    "mcp": "tsx src/mcp-server.ts",
+    "start": "tsx src/index.ts --api",
+    "start:mcp": "tsx src/mcp-server.ts",
+    "start:rest": "START_API=true tsx src/index.ts",
     "deploy": "tsx scripts/deploy-verifier.ts"
   },
   "main": "index.js",

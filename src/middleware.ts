@@ -1,18 +1,17 @@
 import { Request, Response, NextFunction } from "express";
 import { store } from "./store.js";
 import { config } from "./config.js";
-import { ApiError } from "./types.js";
+import { formatError } from "./mcp/errors.js";
 
-/** Require a valid API key on the request. */
-export function requireApiKey(req: Request, _res: Response, next: NextFunction) {
+export function requireApiKey(req: Request, res: Response, next: NextFunction) {
   const key = req.headers["x-api-key"] as string;
   if (!key) {
-    return _res.status(401).json({ error: "X-API-Key header required", code: "MISSING_API_KEY" } satisfies ApiError);
+    return res.status(401).json(formatError("MISSING_API_KEY"));
   }
 
   const apiKey = store.getApiKey(key);
   if (!apiKey || !apiKey.active) {
-    return _res.status(403).json({ error: "Invalid or deactivated API key", code: "INVALID_API_KEY" } satisfies ApiError);
+    return res.status(403).json(formatError("INVALID_API_KEY"));
   }
 
   (req as any).apiKey = apiKey;
@@ -23,7 +22,7 @@ export function requireApiKey(req: Request, _res: Response, next: NextFunction) 
     const windowKey = `rl:${key}:${Math.floor(Date.now() / 60000)}`;
     const hits = rateLimitWindows.get(windowKey) || 0;
     if (hits >= limit) {
-      return _res.status(429).json({ error: "Rate limit exceeded", code: "RATE_LIMITED", details: `Limit: ${limit} req/min (${apiKey.tier} tier)` } satisfies ApiError);
+      return res.status(429).json(formatError("RATE_LIMITED", { tier: apiKey.tier, limit: String(limit) }));
     }
     rateLimitWindows.set(windowKey, hits + 1);
     setTimeout(() => rateLimitWindows.delete(windowKey), 60000).unref();
