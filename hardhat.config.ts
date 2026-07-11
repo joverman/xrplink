@@ -1,15 +1,21 @@
-import type { HardhatUserConfig } from "hardhat/config";
+import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
+import { configVariable, defineConfig } from "hardhat/config";
 import * as dotenv from "dotenv";
 dotenv.config();
 
 const accounts = process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [];
 
-const config: HardhatUserConfig = {
+export default defineConfig({
+  plugins: [hardhatToolboxViemPlugin],
   solidity: {
-    version: "0.8.25",
-    settings: {
-      evmVersion: "cancun",
-      optimizer: { enabled: true, runs: 200 },
+    profiles: {
+      default: {
+        version: "0.8.25",
+        settings: {
+          evmVersion: "cancun",
+          optimizer: { enabled: true, runs: 200 },
+        },
+      },
     },
   },
   networks: {
@@ -30,6 +36,4 @@ const config: HardhatUserConfig = {
       accounts,
     },
   },
-};
-
-export default config;
+});

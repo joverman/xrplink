@@ -22,6 +22,7 @@
   "license": "ISC",
   "type": "module",
   "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.1",
     "@types/uuid": "^10.0.0",
@@ -29,7 +30,8 @@
     "hardhat": "^3.9.1",
     "tsx": "^4.23.0",
     "typescript": "^6.0.3",
-    "uuid": "^14.0.1"
+    "uuid": "^14.0.1",
+    "viem": "^2.55.0"
   },
   "dependencies": {
     "@flarenetwork/flare-periphery-contracts": "^0.1.52",

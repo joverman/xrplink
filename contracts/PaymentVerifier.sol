@@ -70,7 +70,7 @@ contract PaymentVerifier {
      * @param _proof The proof to verify
      * @return bool True if the proof is valid
      */
-    function isProofValid(IXRPPayment.Proof memory _proof) public view returns (bool) {
+    function isProofValid(IXRPPayment.Proof memory _proof) public view virtual returns (bool) {
         IFdcVerification fdc = ContractRegistry.getFdcVerification();
         return fdc.verifyXRPPayment(_proof);
     }
