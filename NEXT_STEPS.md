@@ -1,63 +1,59 @@
-# XRPLink — Next Steps for Cursor/Opencode
+# XRPLink — Next Steps
 
 ## Current State
-The FDC attestation pipeline has been set up and partially tested on Coston2 testnet. An XRP testnet transaction was created, the attestation request was prepared (VALID), submitted to FdcHub (tx confirmed in block 32635719), but proof retrieval from the DA Layer failed. The verify-proof.ts script has code bugs and the round calculation constant was wrong for Coston2.
+Phase 0 (Technical Validation) is **complete**. The end-to-end FDC attestation pipeline is validated on Coston2:
+XRP testnet tx → verifier API → FdcHub → DA Layer → on-chain verification. All 8 tests pass.
+MCP server and REST API start cleanly.
 
-## What to Fix First (Priority Order)
+## Priority Roadmap
 
-### 1. Fix Round Calculation Constant
-The `FIRST_VOTING_ROUND_START_TS` in `submit-request.ts` is `1658429955` (Songbird/Coston value). Coston2 correct value is `1658430000`. Update it, then recalculate the correct round ID for our existing submission.
+### 1. Mainnet Deployment
+- Deploy PaymentVerifierMainnet.sol to Flare mainnet
+- Update `.env` with mainnet RPC and contract address
+- Test a real XRP transaction attestation on mainnet
+- Confirm fee economics (FLR cost per attestation on mainnet)
 
-- Block 32635719 timestamp: 1783484391
-- Correct round: (1783484391 - 1658430000) / 90 = 1389493
-- Query the DA Layer at round 1389493 with the saved ABI_ENCODED_REQUEST
+### 2. Flare Grant Application
+- docs/flare-grant-application.md is drafted — submit to Flare
+- Request: FLR tokens for attestation fees + Google Cloud credits
+- Timeline: ASAP (Phase 0 completion is strong validation)
 
-### 2. Rewrite verify-proof.ts
-Current file is broken (wrong ethers imports, wrong DA Layer URL, missing API key). Rewrite using the same CommonJS + ethers v5 pattern that submit-request.ts uses:
-- `const { ethers } = require("ethers")`
-- Correct DA Layer URL: `https://ctn2-data-availability.flare.network`
-- Include `X-API-KEY: 00000000-0000-0000-0000-000000000000` header
-- After getting proof, deploy PaymentVerifier.sol via Hardhat compile + deploy task to Coston2, then call `processPaymentProof()`
+### 3. x402 Monetization (Cloudflare Monetization Gateway)
+- Join Cloudflare Monetization Gateway waitlist
+- Implement 402 Payment Required responses for `verify_xrp_payment`
+- Set pricing: $0.01 per attestation
+- See docs/x402-integration.md for full plan
 
-### 3. Resubmit Attestation (if round 1389493 fails)
-If the attestation isn't found at any round (meaning it failed consensus):
-- Run `prepare-request.ts` again (should still work with the existing XRP_TX_HASH)
-- Run `submit-request.ts` (will automatically calculate correct round after fixing the constant)
-- Wait 90-180 seconds
-- Run `verify-proof.ts <roundId>` with the corrected script
+### 4. Promotion & Community
+- Post to HN ("Show HN: XRPLink – XRP Payment Attestation on Flare FDC")
+- Share on Flare Discord / Flare Dev Telegram
+- Publish integration guide for developers
+- Add CI badge to README (GitHub Actions for test status)
 
-### 4. Deploy PaymentVerifier to Coston2
-Once proof retrieval works:
-- Add accounts config to hardhat.config.ts from PRIVATE_KEY env
-- Run `npx hardhat compile`
-- Write a Hardhat deploy script for PaymentVerifier.sol
-- Deploy to Coston2
-- Call `processPaymentProof()` with the retrieved proof
+### 5. Production Hardening
+- Add GitHub Actions CI: lint, compile, test
+- Add `.nvmrc` / engines field in package.json
+- Add monitoring (server uptime, attestation success rate)
+- Fix Dockerfile to include `tsx` properly (currently uses `npm install -g tsx` workaround)
+- Add `xrpl` to devDependencies (currently only a transitive dep)
 
-### 5. Build the API Wrapper
-Once the Solidity pipeline is fully validated:
-- Build a simple REST API (Express/Fastify) with endpoints:
-  - `POST /api/v1/verify/xrp-payment { txHash }` — submits to FdcHub, returns round ID
-  - `GET /api/v1/status/:roundId` — polls DA Layer, returns proof when ready
-- Add webhook callback on successful verification
-
-### 6. Apply for Flare Grant
-- Flare grants program offers token grants, up to $200k Google Cloud credits ($350k for AI projects), co-marketing, advisory
-- Thesis: "XRP Data Infrastructure for the Flare Ecosystem"
+### 6. Feature Roadmap
+- Webhook retry logic with exponential backoff
+- Xahau DEX data feeds (Phase 3)
+- Dashboard v2 with real-time charts
+- Custom data feeds via Web2Json
 
 ## Saved Resources
 - `.env` contains: PRIVATE_KEY, VERIFIER_API_KEY, ABI_ENCODED_REQUEST, XRP_TX_HASH
-- Coston2 wallet has 99 test FLR remaining (1 spent on attestation fee)
-- Product sketch: `~/mycode/xrp-link-product-sketch.md`
-- FDC docs index: `https://dev.flare.network/llms.txt`
+- Coston2 wallet has ~99 test FLR remaining
+- PaymentVerifier deployed at `0x6c3443ba8A11666BCEd0dA2f40c378a47b620cfc`
+- FDC docs: `https://dev.flare.network/llms.txt`
 - XRPPayment attestation docs: `https://dev.flare.network/fdc/attestation-types/xrp-payment.md`
-- FDC getting-started (with submit/verify patterns): `https://dev.flare.network/fdc/getting-started.md`
-- Contract registry guide: `https://dev.flare.network/network/guides/flare-contracts-registry.md`
 
 ## Important Gotchas
 1. **ethers v5, not v6** — use `new ethers.providers.JsonRpcProvider()`, not `new ethers.JsonRpcProvider()`
-2. **CommonJS** — `require()`, not `import`. Package.json has `"type": "commonjs"`
-3. **DA Layer URL** — `https://ctn2-data-availability.flare.network`, not `da-layer-coston2.flare.network`
-4. **FIRST_VOTING_ROUND** — `1658430000` for Coston2, not `1658429955`
-5. **XRPPayment vs Payment** — use `IXRPPayment` interface (not `IPayment`) for memo data + destination tag support. Verify with `fdc.verifyXRPPayment(_proof)` not `fdc.verifyPayment()`
-6. **Attestation type encoding** — the attestation type is the *string* "XRPPayment" padded to 32 bytes, not the numeric ID 0x08
+2. **ESM modules** — `"type": "module"` in package.json. All scripts use `import`, not `require()`
+3. **DA Layer URL** — `https://ctn2-data-availability.flare.network` (Coston2), `https://data-availability.flare.network` (mainnet)
+4. **FIRST_VOTING_ROUND** — `1658430000` for Coston2, `1668510000` for Flare mainnet (see `src/config.ts`)
+5. **XRPPayment vs Payment** — use `IXRPPayment` interface (not `IPayment`) for memo data + destination tag support
+6. **Global `fetch`** — requires Node 18+. Available natively, no `node-fetch` dependency needed

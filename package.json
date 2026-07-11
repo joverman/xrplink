@@ -16,7 +16,14 @@
     "deploy": "tsx scripts/deploy-verifier.ts"
   },
   "main": "index.js",
-  "keywords": ["xrp", "flare", "fdc", "attestation", "blockchain", "mcp"],
+  "keywords": [
+    "xrp",
+    "flare",
+    "fdc",
+    "attestation",
+    "blockchain",
+    "mcp"
+  ],
   "author": "",
   "license": "MIT",
   "type": "module",
@@ -38,7 +45,8 @@
     "tsx": "^4.23.0",
     "typescript": "^6.0.3",
     "uuid": "^14.0.1",
-    "viem": "^2.55.0"
+    "viem": "^2.55.0",
+    "xrpl": "^5.0.0"
   },
   "dependencies": {
     "@flarenetwork/flare-periphery-contracts": "^0.1.52",

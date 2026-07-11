@@ -39,25 +39,26 @@
 - Uses ethers v5: `new ethers.providers.JsonRpcProvider()`, `new ethers.Wallet(pk, provider)`
 - ABI: `["function requestAttestation(bytes _data) external payable"]`
 - Fee: 1 test FLR (`ethers.utils.parseEther("1")`)
-- Calculates round ID from block timestamp
+- Calculates round ID from block timestamp using `FIRST_VOTING_ROUND_START_TS = 1658430000` (correct Coston2 value)
 
-**Known bug:** Uses `FIRST_VOTING_ROUND_START_TS = 1658429955` which is for Songbird/Coston. Coston2 correct value: `1658430000`. This means `roundId` logged to console is wrong (showed 1389760, actual was ~1389493).
-
-**Status:** ⚠️ Submission tx went through (block 32635719, tx `0xcbb9687...`) but round ID is wrong
+**Status:** ✅ Working — constant corrected to Coston2 value. Submit attestation, then wait 90s and run verify-proof.ts with the reported round ID.
 
 ---
 
 ## 4. `scripts/verify-proof.ts` — Proof Retrieval & Verification
-**Purpose:** Fetches the Merkle proof from the DA Layer and (ideally) verifies it on-chain.
+**Purpose:** Fetches the Merkle proof from the DA Layer and optionally verifies it on-chain via the PaymentVerifier contract.
 
-**Issues (multiple, needs rewrite):**
-- ❌ Uses `import { ethers } from "ethers"` (ESM) but package.json is CommonJS — will crash at runtime
-- ❌ Uses `new ethers.JsonRpcProvider()` (ethers v6 API) — installed version is 5.8.0
-- ❌ DA Layer URL: `https://da-layer-coston2.flare.network` — does not resolve. Correct: `https://ctn2-data-availability.flare.network`
-- ❌ Missing `X-API-KEY` header in DA Layer request
-- ⚠️ Hardhat ContractFactory deployment approach is overly complex — deploy PaymentVerifier.sol via Hardhat task instead
+**Key details:**
+- Uses ethers v5: `new ethers.providers.JsonRpcProvider()`, `new ethers.Wallet()`, `ethers.BigNumber.from()`
+- Correct DA Layer URL: `https://ctn2-data-availability.flare.network`
+- Includes `X-API-KEY` header from `VERIFIER_API_KEY` env var
+- Accepts round ID and optional contract address as CLI arguments
+- Builds the IXRPPayment.Proof struct from DA Layer response
+- If contract address provided, calls `processPaymentProof()` on-chain
 
-**Status:** ❌ Broken — needs full rewrite
+**Usage:** `tsx scripts/verify-proof.ts <roundId> [contractAddress]`
+
+**Status:** ✅ Working — bugs resolved. Matches the same ethers v5 + ESM pattern used in `submit-request.ts` and `deploy-verifier.ts`.
 
 ---
 
@@ -79,15 +80,19 @@
 ## 6. `scripts/check-balance.ts` — Wallet Balance Check
 **Purpose:** Quick balance check for the Coston2 test wallet.
 
-**Correct syntax:** Uses `const ethers = require("ethers")` and `new ethers.providers.JsonRpcProvider()` (v5). Good reference pattern for other scripts.
+**Correct syntax:** Uses `import { ethers } from "ethers"` and `new ethers.providers.JsonRpcProvider()` (v5). Good reference pattern for other scripts. Note: project uses ESM (`"type": "module"`) — all scripts use `import`, not `require()`.
 
-**Status:** ✅ Works (shows 100 test FLR)
+**Status:** ✅ Works (shows wallet balance)
 
 ---
 
 ## 7. `hardhat.config.ts` — Hardhat Configuration
 **Purpose:** Hardhat configuration with Coston2 and Flare mainnet network definitions.
 
-**Issue:** Accounts from `PRIVATE_KEY` env var is not wired up — network configs don't include `accounts`. Will need `accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []` added to deploy contracts.
+**Key details:**
+- Uses `@nomicfoundation/hardhat-toolbox-viem` plugin
+- Accounts wired from `PRIVATE_KEY` env var: `const accounts = process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []`
+- Both coston2 and flare networks include `accounts`
+- Solidity 0.8.25, EVM cancun target, optimizer enabled
 
-**Status:** ⚠️ Needs accounts config for contract deployment
+**Status:** ✅ Working — accounts configured, compile passes, tests pass
