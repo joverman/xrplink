@@ -130,6 +130,251 @@ function expressJsonWithRaw(req: Request, res: Response, next: express.NextFunct
   express.json()(req, res, next);
 }
 
+// --- Public Receipt Page ---
+
+const XRP_RPC_URL = "https://s1.ripple.com:51234";
+
+interface XrplTxResult {
+  Account: string;
+  Destination: string;
+  Amount: string;
+  Fee: string;
+  Memos?: { Memo: { MemoData?: string; MemoType?: string } }[];
+  DestinationTag?: number;
+  TransactionType: string;
+  meta?: { TransactionResult?: string };
+  date?: number;
+}
+
+async function fetchXrplTx(txHash: string): Promise<XrplTxResult | null> {
+  try {
+    const res = await fetch(XRP_RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        method: "tx",
+        params: [{ transaction: txHash, binary: false }],
+      }),
+    });
+    const data: any = await res.json();
+    if (data.result?.Account) return data.result;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function formatXrpAmount(drops: string): string {
+  const n = BigInt(drops);
+  const whole = n / 1000000n;
+  const frac = n % 1000000n;
+  if (frac === 0n) return whole.toString() + " XRP";
+  return whole.toString() + "." + frac.toString().padStart(6, "0") + " XRP";
+}
+
+function formatTimestamp(unix: number): string {
+  // XRPL timestamps are Ripple epoch (2000-01-01) + seconds
+  const rippleEpoch = 946684800;
+  return new Date((rippleEpoch + unix) * 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC";
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+router.get("/receipt/:txHash", async (req: Request, res: Response) => {
+  const txHash = req.params.txHash.replace(/^0x/i, "").toUpperCase();
+  const attestation = store.getByTxHash(txHash);
+  const wl = whiteLabel.get();
+
+  const shareUrl = `https://${wl.companyUrl.replace(/^https?:\/\//, "")}/receipt/${txHash}`;
+
+  if (attestation && (attestation.status === "verified" || attestation.status === "ready" || attestation.status === "pending")) {
+    const p = attestation.proof?.response;
+    const rb = p?.responseBody;
+
+    const memoHex = rb?.firstMemoData || "";
+    const memoStr = memoHex.startsWith("0x") ? Buffer.from(memoHex.slice(2), "hex").toString("utf8").replace(/\0+$/, "") : "";
+
+    res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Verified Receipt — XRPLink</title>
+<meta name="description" content="Cryptographically verified XRP payment receipt for transaction ${txHash}">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1e293b;background:#f8fafc;line-height:1.6;padding:2rem 1rem}
+.receipt{max-width:680px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:2.5rem}
+.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2rem}
+.header .brand{font-weight:700;font-size:1.1rem;color:#0f172a}
+.header .brand span{color:#6366f1}
+.header .badge{background:#065f46;color:#d1fae5;padding:0.3rem 0.75rem;border-radius:6px;font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.03em}
+h1{font-size:1.25rem;margin-bottom:0.25rem;color:#0f172a}
+.subtitle{color:#64748b;font-size:0.85rem;margin-bottom:1.5rem}
+.row{display:flex;justify-content:space-between;padding:0.75rem 0;border-bottom:1px solid #f1f5f9;font-size:0.88rem}
+.row:last-child{border:none}
+.row .key{color:#64748b;flex-shrink:0}
+.row .value{color:#1e293b;font-family:"SF Mono","Fira Code","JetBrains Mono",monospace;font-size:0.8rem;text-align:right;word-break:break-all;max-width:65%}
+.row .value.green{color:#059669}
+.section-title{font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin:1.5rem 0 0.75rem;font-weight:600}
+.actions{margin-top:2rem;display:flex;gap:1rem}
+.actions a{padding:0.6rem 1.25rem;border-radius:8px;font-weight:600;font-size:0.85rem;text-decoration:none;display:inline-block}
+.btn-primary{background:#6366f1;color:#fff}
+.btn-primary:hover{background:#4f46e5}
+.btn-outline{background:transparent;color:#6366f1;border:1.5px solid #6366f1}
+.btn-outline:hover{background:#eef2ff}
+.footer{text-align:center;margin-top:2rem;padding-top:1.5rem;border-top:1px solid #f1f5f9;font-size:0.8rem;color:#94a3b8}
+.footer a{color:#6366f1;text-decoration:none}
+@media print{body{background:#fff;padding:0}.receipt{border:none;border-radius:0;padding:0}.actions{display:none}}
+@media(max-width:480px){.row{flex-direction:column;gap:0.25rem}.row .value{text-align:left;max-width:100%}}
+</style></head>
+<body>
+<div class="receipt">
+<div class="header">
+  <div class="brand">XRPL<span>ink</span></div>
+  <div class="badge">Verified on Flare</div>
+</div>
+<h1>Verified Payment Receipt</h1>
+<p class="subtitle">This receipt is cryptographically verified by the Flare Data Connector (FDC). Anyone can independently verify it on-chain.</p>
+
+<div class="section-title">Payment Details</div>
+<div class="row"><span class="key">XRP Transaction</span><span class="value">${txHash}</span></div>
+${rb ? `<div class="row"><span class="key">Source Address</span><span class="value">${escapeHtml(rb.sourceAddress)}</span></div>
+<div class="row"><span class="key">Amount</span><span class="value">${formatXrpAmount(rb.receivedAmount)}</span></div>
+<div class="row"><span class="key">Status</span><span class="value green">${rb.status === "0" ? "Success" : "Failed (" + rb.status + ")"}</span></div>
+${rb.hasMemoData && memoStr ? `<div class="row"><span class="key">Memo Data</span><span class="value">${escapeHtml(memoStr)}</span></div>` : ""}
+${rb.hasDestinationTag && rb.destinationTag !== "0" ? `<div class="row"><span class="key">Destination Tag</span><span class="value">${rb.destinationTag}</span></div>` : ""}` : ""}
+
+<div class="section-title">Verification Proof</div>
+<div class="row"><span class="key">Attestation ID</span><span class="value">${attestation.id}</span></div>
+${attestation.roundId ? `<div class="row"><span class="key">FDC Voting Round</span><span class="value">${attestation.roundId.toLocaleString()}</span></div>` : ""}
+${p?.votingRound ? `<div class="row"><span class="key">DA Voting Round</span><span class="value">${p.votingRound}</span></div>` : ""}
+${attestation.verifiedTxHash ? `<div class="row"><span class="key">Verification TX</span><span class="value">${attestation.verifiedTxHash}</span></div>` : ""}
+<div class="row"><span class="key">Flare Contract</span><span class="value">${config.paymentVerifierAddress || "—"}</span></div>
+${attestation.proof?.proof ? `<div class="row"><span class="key">Merkle Proof</span><span class="value">${attestation.proof.proof.length} entries</span></div>` : ""}
+${attestation.status === "pending" ? `<div class="row"><span class="key">Status</span><span class="value">Pending — check back in ~90s</span></div>` : ""}
+
+<div class="actions">
+  <a href="${shareUrl}" class="btn btn-primary">Share Receipt</a>
+  <a href="https://flare-explorer.flare.network/address/${config.paymentVerifierAddress}" class="btn btn-outline" target="_blank">View Contract</a>
+</div>
+
+<div class="footer">
+  <p>Generated by <a href="/">XRPLink</a>. This receipt is independently verifiable by calling <code>verifyXRPPayment()</code> on the <a href="https://flare-explorer.flare.network/address/${config.paymentVerifierAddress}">PaymentVerifierMainnet</a> contract at <code>${config.paymentVerifierAddress}</code> on Flare mainnet.</p>
+</div>
+</div>
+</body></html>`);
+    return;
+  }
+
+  // No attestation found — check if tx exists on XRPL
+  const txData = await fetchXrplTx(txHash);
+
+  if (!txData) {
+    res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Receipt Not Found — XRPLink</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1e293b;background:#f8fafc;line-height:1.6;padding:2rem 1rem;display:flex;align-items:center;justify-content:center;min-height:60vh}
+.card{max-width:520px;text-align:center;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:3rem 2rem}
+.card .icon{font-size:3rem;margin-bottom:1rem}
+.card h2{font-size:1.25rem;margin-bottom:0.5rem}
+.card p{color:#64748b;font-size:0.9rem;margin-bottom:1.5rem}
+.card .btn{display:inline-block;padding:0.6rem 1.5rem;border-radius:8px;font-weight:600;font-size:0.85rem;text-decoration:none;background:#6366f1;color:#fff}
+.card .btn:hover{background:#4f46e5}
+.card .note{margin-top:1rem;font-size:0.8rem;color:#94a3b8}
+</style></head>
+<body>
+<div class="card">
+<div class="icon">🔍</div>
+<h2>Transaction Not Found</h2>
+<p>No XRP transaction with the hash <code style="font-size:0.8rem;word-break:break-all">${escapeHtml(txHash)}</code> was found on the XRP Ledger.</p>
+<a href="/" class="btn">Back to Home</a>
+</div>
+</body></html>`);
+    return;
+  }
+
+  // Transaction exists on XRPL but no receipt yet
+  const amountFormatted = txData.Amount ? formatXrpAmount(txData.Amount) : "—";
+  const memoData = txData.Memos?.[0]?.Memo?.MemoData || "";
+  const memoStr = memoData ? Buffer.from(memoData, "hex").toString("utf8").replace(/\0+$/, "") : "";
+  const txDate = txData.date ? formatTimestamp(txData.date) : "—";
+
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Attest This Payment — XRPLink</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1e293b;background:#f8fafc;line-height:1.6;padding:2rem 1rem}
+.card{max-width:680px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:2.5rem}
+.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2rem}
+.header .brand{font-weight:700;font-size:1.1rem;color:#0f172a}
+.header .brand span{color:#6366f1}
+.header .badge{background:#f59e0b;color:#fffbeb;padding:0.3rem 0.75rem;border-radius:6px;font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.03em}
+h1{font-size:1.25rem;margin-bottom:0.25rem;color:#0f172a}
+.subtitle{color:#64748b;font-size:0.85rem;margin-bottom:1.5rem}
+.row{display:flex;justify-content:space-between;padding:0.75rem 0;border-bottom:1px solid #f1f5f9;font-size:0.88rem}
+.row:last-child{border:none}
+.row .key{color:#64748b;flex-shrink:0}
+.row .value{color:#1e293b;font-family:"SF Mono","Fira Code","JetBrains Mono",monospace;font-size:0.8rem;text-align:right;word-break:break-all;max-width:65%}
+.actions{margin-top:2rem;display:flex;gap:1rem}
+.actions a{padding:0.6rem 1.25rem;border-radius:8px;font-weight:600;font-size:0.85rem;text-decoration:none;display:inline-block}
+.btn-primary{background:#6366f1;color:#fff}
+.btn-primary:hover{background:#4f46e5}
+.btn-outline{background:transparent;color:#6366f1;border:1.5px solid #6366f1}
+.btn-outline:hover{background:#eef2ff}
+.tip{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:1rem 1.25rem;margin-top:1.5rem;font-size:0.85rem;color:#92400e}
+.tip code{background:#fef3c7;padding:0.1rem 0.3rem;border-radius:3px;font-size:0.8rem}
+.footer{text-align:center;margin-top:2rem;padding-top:1.5rem;border-top:1px solid #f1f5f9;font-size:0.8rem;color:#94a3b8}
+.footer a{color:#6366f1;text-decoration:none}
+@media(max-width:480px){.row{flex-direction:column;gap:0.25rem}.row .value{text-align:left;max-width:100%}}
+</style></head>
+<body>
+<div class="card">
+<div class="header">
+  <div class="brand">XRPL<span>ink</span></div>
+  <div class="badge">Not Yet Attested</div>
+</div>
+<h1>XRP Payment Found</h1>
+<p class="subtitle">This transaction exists on the XRP Ledger but hasn't been attested yet. Generate a verified receipt below.</p>
+
+<div class="section-title" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:0.75rem;font-weight:600">Transaction Details</div>
+<div class="row"><span class="key">Transaction Hash</span><span class="value">${txHash}</span></div>
+<div class="row"><span class="key">Source Address</span><span class="value">${escapeHtml(txData.Account)}</span></div>
+<div class="row"><span class="key">Destination</span><span class="value">${escapeHtml(txData.Destination)}</span></div>
+<div class="row"><span class="key">Amount</span><span class="value">${amountFormatted}</span></div>
+<div class="row"><span class="key">Timestamp</span><span class="value">${txDate}</span></div>
+${memoStr ? `<div class="row"><span class="key">Memo</span><span class="value">${escapeHtml(memoStr)}</span></div>` : ""}
+${txData.DestinationTag ? `<div class="row"><span class="key">Destination Tag</span><span class="value">${txData.DestinationTag}</span></div>` : ""}
+
+<div class="tip">
+  <strong>Want a verified receipt?</strong> Use our API to attest this payment. Receipts are cryptographically verified on the Flare Network and independently verifiable.
+  <br><br>
+  <code style="display:block;background:#fef3c7;padding:0.75rem;border-radius:6px;margin-top:0.5rem;line-height:1.5">
+    # Get an API key at /dashboard<br>
+    curl -X POST https://${req.headers.host}/api/v1/verify/xrp-payment \<br>
+    &nbsp;&nbsp;-H "Content-Type: application/json" \<br>
+    &nbsp;&nbsp;-H "X-API-Key: sk_live_..." \<br>
+    &nbsp;&nbsp;-d '{"txHash": "${txHash}"}'
+  </code>
+</div>
+
+<div class="actions">
+  <a href="/dashboard" class="btn btn-primary">Get an API Key</a>
+  <a href="https://livenet.xrpl.org/transactions/${txHash}" class="btn btn-outline" target="_blank">View on XRPL Explorer</a>
+</div>
+
+<div class="footer">
+  <p><a href="/">XRPLink</a> — Cryptographically Verified XRP Payment Receipts</p>
+</div>
+</div>
+</body></html>`);
+});
+
 // --- MCP documentation resources served as JSON (for HTTP clients) ---
 
 router.get("/mcp/resources", async (_req: Request, res: Response) => {
