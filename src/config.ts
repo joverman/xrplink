@@ -27,10 +27,10 @@ const networks: Record<Network, NetworkConfig> = {
   flare: {
     rpc: "https://flare-api.flare.network/ext/C/rpc",
     chainId: 14,
-    fdcHub: "0x1000000000000000000000000000000000000004",
-    daLayerUrl: "https://data-availability.flare.network",
-    verifierBaseUrl: "https://fdc-verifiers.flare.network",
-    firstVotingRoundStart: 1668510000,
+    fdcHub: "0xc25c749DC27Efb1864Cb3DADa8845B7687eB2d44",
+    daLayerUrl: "https://flr-data-availability.flare.network",
+    verifierBaseUrl: "https://fdc-verifiers-mainnet.flare.network",
+    firstVotingRoundStart: 1658430000,
     sourceId: "XRP",
   },
 };
@@ -56,7 +56,7 @@ export const config = {
   privateKey: resolvedKey,
   verifierApiKey: process.env.VERIFIER_API_KEY || "00000000-0000-0000-0000-000000000000",
   paymentVerifierAddress: resolvedVerifier,
-  submitFeeFlr: process.env.SUBMIT_FEE_FLR || "1",
+  submitFeeFlr: process.env.SUBMIT_FEE_FLR || (network === "flare" ? "20" : "1"),
   maxPollAttempts: parseInt(process.env.MAX_POLL_ATTEMPTS || "6", 10),
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || "30000", 10),
   rateLimits: { free: 10, paid: 100, pro: Infinity },
