@@ -37,13 +37,25 @@ const networks: Record<Network, NetworkConfig> = {
 
 export const activeNetwork = networks[network];
 
+const resolvedKey = network === "flare"
+  ? (process.env.PRIVATE_KEY_FLARE || "")
+  : (process.env.PRIVATE_KEY_COSTON2 || "");
+
+const resolvedVerifier = network === "flare"
+  ? (process.env.PAYMENT_VERIFIER_ADDRESS_FLARE || "")
+  : (process.env.PAYMENT_VERIFIER_ADDRESS_COSTON2 || "");
+
+// Backward compat: scripts that read process.env.PRIVATE_KEY directly still work
+process.env.PRIVATE_KEY = resolvedKey || process.env.PRIVATE_KEY;
+process.env.PAYMENT_VERIFIER_ADDRESS = resolvedVerifier || process.env.PAYMENT_VERIFIER_ADDRESS;
+
 export const config = {
   network,
   port: parseInt(process.env.PORT || "3000", 10),
   mcpSsePort: parseInt(process.env.MCP_SSE_PORT || "3001", 10),
-  privateKey: process.env.PRIVATE_KEY || "",
+  privateKey: resolvedKey,
   verifierApiKey: process.env.VERIFIER_API_KEY || "00000000-0000-0000-0000-000000000000",
-  paymentVerifierAddress: process.env.PAYMENT_VERIFIER_ADDRESS || "",
+  paymentVerifierAddress: resolvedVerifier,
   submitFeeFlr: process.env.SUBMIT_FEE_FLR || "1",
   maxPollAttempts: parseInt(process.env.MAX_POLL_ATTEMPTS || "6", 10),
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || "30000", 10),

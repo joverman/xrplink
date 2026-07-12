@@ -1,18 +1,17 @@
 import "dotenv/config";
 import { ethers } from "ethers";
 import fs from "fs";
+import { config, activeNetwork } from "../src/config.js";
 
 type Network = "coston2" | "flare";
 
-const NETWORKS: Record<Network, { rpc: string; name: string; contract: string; currency: string }> = {
+const NETWORKS: Record<Network, { name: string; contract: string; currency: string }> = {
   coston2: {
-    rpc: "https://coston2-api.flare.network/ext/C/rpc",
     name: "Coston2",
     contract: "PaymentVerifier.sol",
     currency: "test FLR",
   },
   flare: {
-    rpc: "https://flare-api.flare.network/ext/C/rpc",
     name: "Flare Mainnet",
     contract: "PaymentVerifierMainnet.sol",
     currency: "FLR",
@@ -28,8 +27,8 @@ async function main() {
     process.exit(1);
   }
 
-  const provider = new ethers.providers.JsonRpcProvider(net.rpc);
-  const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+  const provider = new ethers.providers.JsonRpcProvider(activeNetwork.rpc);
+  const wallet = new ethers.Wallet(config.privateKey, provider);
 
   const balance = await provider.getBalance(wallet.address);
   console.log(`Deploying to ${net.name}`);
