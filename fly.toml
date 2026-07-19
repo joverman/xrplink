@@ -1,0 +1,25 @@
+app = "xrp-link"
+
+primary_region = "lhr"
+
+[env]
+  FLARE_NETWORK = "flare"
+  PORT = "3000"
+
+[build]
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+[[mounts]]
+  source = "xrplink_data"
+  destination = "/app/data"

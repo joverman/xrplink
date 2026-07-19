@@ -1,6 +1,9 @@
 node_modules/
-.env
 .git/
+.env
 .cursor/
-dist/
+.opencode/
+docs/
+test/
 scripts/
+*.md

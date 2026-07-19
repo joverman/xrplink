@@ -128,6 +128,14 @@ class JsonFileStore {
     }
   }
 
+  updateApiKeyTier(key: string, tier: Tier): boolean {
+    const record = this.data.apiKeys[key];
+    if (!record) return false;
+    record.tier = tier;
+    this.syncPersist();
+    return true;
+  }
+
   // --- Webhooks ---
 
   registerWebhook(url: string, attestationId: string | null): Webhook {

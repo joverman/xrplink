@@ -20,6 +20,8 @@ if (startApi) {
   app.listen(config.port, () => {
     console.log(`REST API running on port ${config.port}`);
   });
+  // Initialize Stripe products (fire and forget)
+  import("./billing.js").then((m) => m.initProducts()).catch(() => {});
 }
 
 // Graceful shutdown

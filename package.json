@@ -14,7 +14,7 @@
     "start:mcp": "tsx src/mcp-server.ts",
     "start:rest": "START_API=true tsx src/index.ts",
     "deploy": "tsx scripts/deploy-verifier.ts",
-"attest": "tsx scripts/attest-mainnet.ts"
+    "attest": "tsx scripts/attest-mainnet.ts"
   },
   "main": "index.js",
   "keywords": [
@@ -43,7 +43,7 @@
     "@types/uuid": "^10.0.0",
     "dotenv": "^17.4.2",
     "hardhat": "^3.9.1",
-    "tsx": "^4.23.0",
+    "tsx": "^4.23.1",
     "typescript": "^6.0.3",
     "uuid": "^14.0.1",
     "viem": "^2.55.0",
@@ -52,6 +52,10 @@
   "dependencies": {
     "@flarenetwork/flare-periphery-contracts": "^0.1.52",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "express": "^5.2.1"
+    "bcryptjs": "^3.0.3",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "resend": "^6.17.2",
+    "stripe": "^22.3.2"
   }
 }

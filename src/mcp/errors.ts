@@ -90,6 +90,41 @@ const catalog: Record<string, ErrorEntry> = {
       "The attestation round may not have finalized yet (wait 90-180s), or the request bytes don't match what was submitted. Check the round ID and retry.",
     docsUrl: "xrplink://docs/network",
   },
+  MISSING_AUTH: {
+    message: "Authorization header is required",
+    suggestedAction: "Pass an 'Authorization: Bearer <token>' header. Sign up or log in at /auth/signup or /auth/login.",
+    docsUrl: "",
+  },
+  INVALID_AUTH: {
+    message: "Invalid or expired authorization token",
+    suggestedAction: "Log in again at /auth/login to get a new token.",
+    docsUrl: "",
+  },
+  AUTH_FAILED: {
+    message: "Authentication failed",
+    suggestedAction: "Check your credentials and try again.",
+    docsUrl: "",
+  },
+  MISSING_EMAIL: {
+    message: "Email field is required",
+    suggestedAction: "Provide an email address in the request body.",
+    docsUrl: "",
+  },
+  MISSING_PARAMS: {
+    message: "Required parameters are missing",
+    suggestedAction: "Check the request body for all required fields.",
+    docsUrl: "",
+  },
+  INVALID_TIER: {
+    message: "Invalid subscription tier",
+    suggestedAction: "Choose 'paid' ($29/mo) or 'pro' ($99/mo).",
+    docsUrl: "",
+  },
+  BILLING_ERROR: {
+    message: "Billing service error",
+    suggestedAction: "Retry the request. If the problem persists, contact support.",
+    docsUrl: "",
+  },
 };
 
 export function formatError(code: string, ctx?: Record<string, string>, fallbackMessage?: string): AgentError {
