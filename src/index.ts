@@ -17,7 +17,7 @@ startMcpServer().catch((err) => {
 const startApi = process.argv.includes("--api") || process.env.START_API === "true";
 if (startApi) {
   const { default: app } = await import("./app.js");
-  app.listen(config.port, () => {
+  app.listen(config.port, "0.0.0.0", () => {
     console.log(`REST API running on port ${config.port}`);
   });
   // Initialize Stripe products (fire and forget)
