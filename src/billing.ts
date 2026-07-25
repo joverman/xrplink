@@ -29,22 +29,22 @@ export async function initProducts() {
     });
     if (existing.data.length > 0) {
       info.priceId = existing.data[0].id;
+      console.log(`Found existing price for ${tier}: ${info.priceId}`);
       continue;
     }
-    // Create the product and price
-    await stripe.products.create({
+    const product = await stripe.products.create({
       name: `XRPLink ${tier.charAt(0).toUpperCase() + tier.slice(1)}`,
-      lookup_key: `xrplink_${tier}`,
+      description: tier === "paid" ? "5 verified receipts per month" : "25 verified receipts per month",
     });
     const price = await stripe.prices.create({
-      product_data: { lookup_key: `xrplink_${tier}` },
-      unit_amount: tier === "paid" ? 2900 : 9900, // $29, $99
+      product: product.id,
+      unit_amount: tier === "paid" ? 2900 : 9900,
       currency: "usd",
       recurring: { interval: "month" },
       lookup_key: `xrplink_${tier}`,
     });
     info.priceId = price.id;
-    console.log(`Created Stripe product for ${tier}: ${price.id}`);
+    console.log(`Created Stripe product/price for ${tier}: product=${product.id} price=${price.id}`);
   }
 }
 
