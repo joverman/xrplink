@@ -3,14 +3,16 @@ FROM node:22-alpine
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
+COPY hardhat.config.ts ./
+COPY contracts/ ./contracts/
 COPY tsconfig.json ./
 COPY src/ ./src/
 COPY public/ ./public/
-COPY contracts/ ./contracts/
-COPY hardhat.config.ts ./
-COPY artifacts/ ./artifacts/
+
+# Compile Solidity contracts to generate artifacts
+RUN npx hardhat compile --quiet
 
 EXPOSE 3000
 
