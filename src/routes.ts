@@ -58,7 +58,15 @@ router.post("/auth/reset-password/confirm", async (req: Request, res: Response) 
 router.get("/me", requireAuth, (req: Request, res: Response) => {
   const user = (req as any).user;
   const keys = store.listApiKeys().filter((k) => user.apiKeyIds.includes(k.key));
-  res.json({ user: { id: user.id, email: user.email, tier: user.tier, createdAt: user.createdAt }, apiKeys: keys });
+  res.json({ user: { id: user.id, email: user.email, tier: user.tier, createdAt: user.createdAt, usageCount: keys.reduce((s, k) => s + k.usageCount, 0) }, apiKeys: keys });
+});
+
+router.get("/receipts", requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const keys = store.listApiKeys().filter((k) => user.apiKeyIds.includes(k.key));
+  // Attestations are currently global — return all for now (filter by user in future)
+  const all = store.listAttestations();
+  res.json(all.slice(0, 50));
 });
 
 // --- Billing endpoints ---
@@ -83,6 +91,109 @@ router.get("/billing/portal", requireAuth, async (req: Request, res: Response) =
   return res.json({ url: session.url });
 });
 
+// --- Auth pages ---
+
+const AUTH_PAGE_STYLE = `
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem 1rem}
+.card{max-width:420px;width:100%;background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2.5rem}
+.card .logo{text-align:center;font-weight:700;font-size:1.25rem;color:#f1f5f9;margin-bottom:1.5rem}
+.card .logo span{color:#818cf8}
+.card h1{font-size:1.25rem;margin-bottom:0.25rem;text-align:center}
+.card .subtitle{text-align:center;color:#64748b;font-size:0.85rem;margin-bottom:1.5rem}
+.form-group{margin-bottom:1rem}
+.form-group label{display:block;font-size:0.85rem;font-weight:600;color:#94a3b8;margin-bottom:0.35rem}
+.form-group input{width:100%;padding:0.7rem 0.85rem;border:1px solid #334155;border-radius:6px;font-size:0.9rem;background:#0f172a;color:#e2e8f0;outline:none;font-family:inherit}
+.form-group input:focus{border-color:#818cf8}
+.btn{display:block;width:100%;padding:0.7rem;border-radius:8px;font-weight:600;font-size:0.9rem;cursor:pointer;border:none;text-align:center;text-decoration:none}
+.btn-primary{background:#818cf8;color:#0f172a}
+.btn-primary:hover{background:#6366f1}
+.btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+.error{background:#7f1d1d;color:#fca5a5;padding:0.6rem 0.85rem;border-radius:6px;font-size:0.85rem;margin-bottom:1rem;display:none}
+.footer{text-align:center;margin-top:1.5rem;font-size:0.85rem;color:#64748b}
+.footer a{color:#818cf8;text-decoration:none}
+`;
+
+router.get("/signup", (_req: Request, res: Response) => {
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Sign Up — XRPLink</title><style>${AUTH_PAGE_STYLE}</style></head>
+<body>
+<div class="card">
+<div class="logo">XRPL<span>ink</span></div>
+<h1>Create your account</h1>
+<p class="subtitle">Get a free API key for receipt lookup</p>
+<div class="error" id="error"></div>
+<form id="signupForm" onsubmit="return handleSignup(event)">
+<div class="form-group"><label>Email</label><input type="email" id="email" required autocomplete="email" placeholder="you@example.com"></div>
+<div class="form-group"><label>Password</label><input type="password" id="password" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters"></div>
+<button type="submit" class="btn btn-primary" id="submitBtn">Create Account</button>
+</form>
+<div class="footer">Already have an account? <a href="/login">Log in</a></div>
+</div>
+<script>
+async function handleSignup(e) {
+  e.preventDefault();
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const error = document.getElementById('error');
+  const btn = document.getElementById('submitBtn');
+  error.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Creating account...';
+  try {
+    const r = await fetch('/auth/signup', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password}) });
+    const d = await r.json();
+    if (!r.ok) { error.textContent = d.message || d.error || 'Signup failed'; error.style.display = 'block'; btn.disabled = false; btn.textContent = 'Create Account'; return; }
+    localStorage.setItem('xrplink_token', d.token);
+    localStorage.setItem('xrplink_api_key', d.apiKey);
+    window.location.href = '/dashboard';
+  } catch(e) { error.textContent = 'Network error'; error.style.display = 'block'; btn.disabled = false; btn.textContent = 'Create Account'; }
+}
+</script>
+</body></html>`);
+});
+
+router.get("/login", (_req: Request, res: Response) => {
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Log In — XRPLink</title><style>${AUTH_PAGE_STYLE}</style></head>
+<body>
+<div class="card">
+<div class="logo">XRPL<span>ink</span></div>
+<h1>Welcome back</h1>
+<p class="subtitle">Log in to your account</p>
+<div class="error" id="error"></div>
+<form id="loginForm" onsubmit="return handleLogin(event)">
+<div class="form-group"><label>Email</label><input type="email" id="email" required autocomplete="email" placeholder="you@example.com"></div>
+<div class="form-group"><label>Password</label><input type="password" id="password" required autocomplete="current-password" placeholder="Your password"></div>
+<button type="submit" class="btn btn-primary" id="submitBtn">Log In</button>
+</form>
+<div class="footer">No account? <a href="/signup">Sign up</a></div>
+</div>
+<script>
+async function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const error = document.getElementById('error');
+  const btn = document.getElementById('submitBtn');
+  error.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Logging in...';
+  try {
+    const r = await fetch('/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password}) });
+    const d = await r.json();
+    if (!r.ok) { error.textContent = d.message || d.error || 'Login failed'; error.style.display = 'block'; btn.disabled = false; btn.textContent = 'Log In'; return; }
+    localStorage.setItem('xrplink_token', d.token);
+    localStorage.setItem('xrplink_api_key', d.apiKey);
+    window.location.href = '/dashboard';
+  } catch(e) { error.textContent = 'Network error'; error.style.display = 'block'; btn.disabled = false; btn.textContent = 'Log In'; }
+}
+</script>
+</body></html>`);
+});
+
 // --- Public endpoints ---
 
 router.get("/health", (_req: Request, res: Response) => {
@@ -100,64 +211,217 @@ router.get("/health", (_req: Request, res: Response) => {
   });
 });
 
-router.get("/dashboard", (_req: Request, res: Response) => {
-  const wl = whiteLabel.get();
-  const attestations = store.listAttestations();
-  const apiKeys = store.listApiKeys();
-
-  const apiKeyRows = apiKeys.map((k) => `
-    <tr><td><code>${k.key.slice(0, 16)}...</code></td><td>${k.name}</td>
-    <td><span class="tier ${k.tier}">${k.tier}</span></td><td>${k.active ? "✅" : "❌"}</td>
-    <td>${k.usageCount}</td><td>${new Date(k.createdAt).toLocaleString()}</td></tr>
-  `).join("");
-
-  const attRows = attestations.slice(0, 50).map((a) => `
-    <tr><td><code>${a.id.slice(0, 8)}</code></td><td><code>${a.txHash.slice(0, 16)}...</code></td>
-    <td><span class="status ${a.status}">${a.status}</span></td><td>${a.roundId ?? "—"}</td>
-    <td>${a.verifiedTxHash ? `<code>${a.verifiedTxHash.slice(0, 16)}...</code>` : "—"}</td>
-    <td>${new Date(a.createdAt).toLocaleString()}</td></tr>
-  `).join("");
+router.get("/dashboard", (req: Request, res: Response) => {
+  // Check for auth via header or cookie
+  const auth = req.headers.authorization || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
 
   res.type("html").send(`<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>${wl.brandName} Dashboard</title>
-${wl.brandName !== "XRPLink" ? whiteLabel.injectCss() : ""}
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Dashboard — XRPLink</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;padding:2rem}
-h2{font-size:1.1rem;margin:1.5rem 0 0.5rem;color:#94a3b8}
-.sub{color:#64748b;font-size:0.85rem;margin-bottom:1rem}
-table{width:100%;border-collapse:collapse;font-size:0.8rem}
-th,td{text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid #1e293b}
-th{color:#64748b;font-weight:600;text-transform:uppercase;font-size:0.7rem;letter-spacing:0.05em}
-code{font-family:"JetBrains Mono","Fira Code",monospace;font-size:0.75rem;background:#1e293b;padding:0.15rem 0.35rem;border-radius:3px}
-.status,.tier{display:inline-block;padding:0.15rem 0.5rem;border-radius:4px;font-size:0.7rem;font-weight:600}
-.status.verified{background:#065f46;color:#6ee7b7}.status.pending{background:#1e3a5f;color:#93c5fd}
-.status.ready{background:#5b3a1e;color:#fcd34d}.status.failed,.status.not_found{background:#5f1e1e;color:#fca5a5}
-.tier.free{background:#1e293b;color:#94a3b8}.tier.paid{background:#1e3a5f;color:#60a5fa}.tier.pro{background:#3b1e5f;color:#c084fc}
-.stats{display:flex;gap:1rem;margin:1rem 0}
-.stat-card{background:#1e293b;border-radius:8px;padding:1rem;flex:1}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6;padding:2rem 1rem}
+.wrap{max-width:800px;margin:0 auto}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem}
+.header .logo{font-weight:700;font-size:1.25rem;color:#f1f5f9;text-decoration:none}
+.header .logo span{color:#818cf8}
+.header .nav a{color:#94a3b8;text-decoration:none;font-size:0.85rem;margin-left:1.5rem}
+.header .nav a:hover{color:#e2e8f0}
+.api-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem;position:relative}
+.api-card h2{font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:0.75rem}
+.api-key{display:flex;align-items:center;gap:0.5rem;background:#0f172a;padding:0.7rem 1rem;border-radius:8px;font-family:"SF Mono","Fira Code",monospace;font-size:0.8rem;color:#e2e8f0;overflow:hidden}
+.api-key .val{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.api-key .copy-btn{background:#334155;border:none;color:#94a3b8;cursor:pointer;padding:0.3rem 0.6rem;border-radius:4px;font-size:0.75rem;flex-shrink:0}
+.api-key .copy-btn:hover{background:#475569;color:#e2e8f0}
+.api-key .copy-btn.copied{background:#065f46;color:#6ee7b7}
+.stats{display:flex;gap:1rem;margin-bottom:1.5rem}
+.stat-card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:1rem;flex:1;text-align:center}
 .stat-card .num{font-size:1.5rem;font-weight:700}
 .stat-card .label{font-size:0.75rem;color:#64748b;margin-top:0.25rem}
+.verify-box{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem}
+.verify-box h2{font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:0.75rem}
+.verify-input{display:flex;gap:0.5rem}
+.verify-input input{flex:1;padding:0.7rem 0.85rem;border:1px solid #334155;border-radius:6px;font-size:0.85rem;background:#0f172a;color:#e2e8f0;outline:none;font-family:"SF Mono","Fira Code",monospace}
+.verify-input input:focus{border-color:#818cf8}
+.verify-input button{padding:0.7rem 1.25rem;background:#818cf8;color:#0f172a;border:none;border-radius:6px;font-weight:600;cursor:pointer}
+.verify-input button:hover{background:#6366f1}
+.msg{padding:0.6rem 0.85rem;border-radius:6px;font-size:0.85rem;margin-top:0.75rem;display:none}
+.msg.success{display:block;background:#065f46;color:#6ee7b7}
+.msg.error{display:block;background:#7f1d1d;color:#fca5a5}
+.msg.info{display:block;background:#1e3a5f;color:#93c5fd}
+.receipts-table{width:100%;border-collapse:collapse;font-size:0.8rem}
+.receipts-table th{text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid #334155;color:#64748b;font-weight:600;text-transform:uppercase;font-size:0.7rem;letter-spacing:0.05em}
+.receipts-table td{padding:0.5rem 0.75rem;border-bottom:1px solid #1e293b;color:#cbd5e1}
+.receipts-table td .status{display:inline-block;padding:0.15rem 0.5rem;border-radius:4px;font-size:0.7rem;font-weight:600}
+.status.verified{background:#065f46;color:#6ee7b7}.status.pending{background:#1e3a5f;color:#93c5fd}
+.status.ready{background:#5b3a1e;color:#fcd34d}.status.failed,.status.not_found{background:#5f1e1e;color:#fca5a5}
+.status.free{color:#94a3b8}.status.paid{color:#60a5fa}.status.pro{color:#c084fc}
+.tier{display:inline-block;padding:0.15rem 0.5rem;border-radius:4px;font-size:0.65rem;font-weight:700;text-transform:uppercase;background:#1e293b}
+.tier.free{color:#94a3b8;background:#1e293b;border:1px solid #334155}
+.tier.paid{color:#60a5fa;background:#1e3a5f;border:1px solid #1e3a5f}
+.tier.pro{color:#c084fc;background:#3b1e5f;border:1px solid #3b1e5f}
+.upgrade-banner{background:linear-gradient(135deg,#1e293b,#1e3a5f);border:1px solid #334155;border-radius:12px;padding:1.5rem;text-align:center;margin-top:1.5rem}
+.upgrade-banner h3{font-size:1rem;margin-bottom:0.5rem}
+.upgrade-banner p{color:#94a3b8;font-size:0.85rem;margin-bottom:1rem}
+.btn{display:inline-block;padding:0.6rem 1.5rem;border-radius:8px;font-weight:600;font-size:0.9rem;text-decoration:none;cursor:pointer;border:none}
+.btn-primary{background:#818cf8;color:#0f172a}
+.btn-primary:hover{background:#6366f1}
+.btn-outline{background:transparent;color:#818cf8;border:1.5px solid #818cf8}
+.login-card{text-align:center;padding:3rem 1rem}
+.login-card h2{font-size:1.25rem;margin-bottom:0.5rem}
+.login-card p{color:#94a3b8;margin-bottom:1.5rem}
+.empty{color:#64748b;font-size:0.85rem;padding:1rem 0;text-align:center}
 </style></head>
 <body>
-<div class="brand-header">
-  <h1>${wl.logoUrl ? `<img src="${wl.logoUrl}" class="brand-logo">` : ""}${wl.brandName}</h1>
-  <p>Network: ${config.network} · ${config.paymentVerifierAddress ? "✅ Verifier configured" : "⚠️ Verifier not set"}</p>
+<div class="wrap">
+<div class="header">
+  <a href="/" class="logo">XRPL<span>ink</span></a>
+  <div class="nav">
+    <a href="/" id="navHome">Home</a>
+    <a href="#" id="navLogout" style="display:none">Log out</a>
+  </div>
 </div>
-<div class="stats">
-  <div class="stat-card"><div class="num">${attestations.length}</div><div class="label">Total Attestations</div></div>
-  <div class="stat-card"><div class="num">${attestations.filter(a => a.status === "verified").length}</div><div class="label">Verified</div></div>
-  <div class="stat-card"><div class="num">${apiKeys.length}</div><div class="label">API Keys</div></div>
-  <div class="stat-card"><div class="num">${apiKeys.reduce((s, k) => s + k.usageCount, 0)}</div><div class="label">Total Requests</div></div>
+
+<div id="loading" style="text-align:center;padding:3rem;color:#64748b">Loading...</div>
+
+<div id="dashboardContent" style="display:none"></div>
+<div id="loginPrompt" style="display:none" class="login-card">
+  <h2>Log in to your dashboard</h2>
+  <p>Sign in to view your API key, receipts, and usage.</p>
+  <a href="/login" class="btn btn-primary">Log In</a>
+  <br><br>
+  <a href="/signup" class="btn btn-outline">Create an Account</a>
 </div>
-<h2>API Keys</h2>
-<table><thead><tr><th>Key</th><th>Name</th><th>Tier</th><th>Active</th><th>Uses</th><th>Created</th></tr></thead>
-<tbody>${apiKeyRows || '<tr><td colspan="6" style="color:#64748b">No API keys yet</td></tr>'}</tbody></table>
-<h2>Recent Attestations</h2>
-<table><thead><tr><th>ID</th><th>TX Hash</th><th>Status</th><th>Round</th><th>Verified TX</th><th>Created</th></tr></thead>
-<tbody>${attRows || '<tr><td colspan="6" style="color:#64748b">No attestations yet</td></tr>'}</tbody></table>
+</div>
+
+<script>
+const TOKEN_KEY = 'xrplink_token';
+const API_KEY_KEY = 'xrplink_api_key';
+
+async function loadDashboard() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) {
+    document.getElementById('loginPrompt').style.display = 'block';
+    document.getElementById('loading').style.display = 'none';
+    return;
+  }
+
+  try {
+    const r = await fetch('/me', { headers: { 'Authorization': 'Bearer ' + token } });
+    if (!r.ok) { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(API_KEY_KEY); window.location.reload(); return; }
+    const data = await r.json();
+    renderDashboard(data);
+  } catch(e) {
+    document.getElementById('loading').textContent = 'Could not load dashboard.';
+  }
+}
+
+function renderDashboard(data) {
+  const user = data.user;
+  const apiKeys = data.apiKeys;
+  const apiKey = apiKeys[0] || { key: localStorage.getItem(API_KEY_KEY) || 'Loading...' };
+  const tier = user.tier || 'free';
+  const monthlyLimit = tier === 'free' ? 0 : (tier === 'paid' ? 5 : 25);
+  const usage = user.usageCount || 0;
+
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('dashboardContent').style.display = 'block';
+  document.getElementById('navLogout').style.display = 'inline';
+
+  document.getElementById('dashboardContent').innerHTML = \`
+    <div class="api-card">
+      <h2>Your API Key</h2>
+      <div class="api-key">
+        <span class="val">\${apiKey.key}</span>
+        <button class="copy-btn" onclick="copyKey(this)">Copy</button>
+      </div>
+      <p style="color:#64748b;font-size:0.75rem;margin-top:0.5rem">Use this key in the \`X-API-Key\` header to call the API.</p>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card"><div class="num">\${tier.charAt(0).toUpperCase() + tier.slice(1)}</div><div class="label">Plan</div></div>
+      <div class="stat-card"><div class="num">\${monthlyLimit === 0 ? 'Lookup only' : monthlyLimit}</div><div class="label">Receipts / month</div></div>
+      <div class="stat-card"><div class="num"><span class="tier \${tier}">\${tier}</span></div><div class="label">Rate limit</div></div>
+    </div>
+
+    <div class="verify-box">
+      <h2>Verify an XRP Payment</h2>
+      <div class="verify-input">
+        <input type="text" id="txHashInput" placeholder="Paste an XRP transaction hash..." spellcheck="false">
+        <button onclick="lookupTx()">Look Up</button>
+      </div>
+      <div class="msg info" id="lookupMsg" style="display:none">Enter a txHash to look up or attest a payment.</div>
+    </div>
+
+    <h2 style="font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:0.75rem">Your Receipts</h2>
+    <table class="receipts-table" id="receiptTable">
+      <thead><tr><th>TX Hash</th><th>Status</th><th>Date</th><th></th></tr></thead>
+      <tbody id="receiptBody">
+        <tr><td colspan="4" class="empty">Loading receipts...</td></tr>
+      </tbody>
+    </table>
+
+    \${tier === 'free' ? \`
+      <div class="upgrade-banner">
+        <h3>Upgrade to create verified receipts</h3>
+        <p>Your free plan includes receipt lookup only. Upgrade to attest payments and generate cryptographic proofs.</p>
+        <a href="#pricing" class="btn btn-primary">See Plans</a>
+      </div>
+    \` : ''}
+  \`;
+
+  // Load receipts
+  loadReceipts();
+}
+
+async function loadReceipts() {
+  try {
+    const r = await fetch('/receipts', {
+      headers: { 'Authorization': 'Bearer ' + localStorage.getItem(TOKEN_KEY) }
+    });
+    if (!r.ok) return;
+    const receipts = await r.json();
+    const tbody = document.getElementById('receiptBody');
+    if (receipts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">No receipts yet. Verify a payment above.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = receipts.slice(0, 20).map(r => \`
+      <tr>
+        <td><code style="font-size:0.75rem;background:#1e293b;padding:0.15rem 0.35rem;border-radius:3px">\${r.txHash.slice(0, 20)}...</code></td>
+        <td><span class="status \${r.status}">\${r.status}</span></td>
+        <td style="color:#64748b;font-size:0.8rem">\${new Date(r.createdAt).toLocaleDateString()}</td>
+        <td><a href="/receipt/\${r.txHash}" style="color:#818cf8;text-decoration:none;font-size:0.8rem">View →</a></td>
+      </tr>
+    \`).join('');
+  } catch(e) {}
+}
+
+function lookupTx() {
+  const hash = document.getElementById('txHashInput').value.trim();
+  if (!hash) return;
+  window.location.href = '/receipt/' + hash.replace(/^0x/i, '').toUpperCase();
+}
+
+function copyKey(btn) {
+  const key = btn.parentElement.querySelector('.val').textContent;
+  navigator.clipboard.writeText(key).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  }).catch(() => {});
+}
+
+document.getElementById('navLogout').addEventListener('click', (e) => {
+  e.preventDefault();
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(API_KEY_KEY);
+  window.location.reload();
+});
+
+loadDashboard();
+</script>
 </body></html>`);
 });
 

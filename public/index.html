@@ -6,111 +6,98 @@
 <title>XRPLink — Cryptographically Verified XRP Payment Receipts</title>
 <meta name="description" content="Generate tamper-proof, cryptographically verified receipts for any XRP payment. Built for compliance, audit, and merchant reconciliation on the Flare Network.">
 <style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; color: #1e293b; background: #f8fafc; line-height: 1.6; }
-.container { max-width: 1120px; margin: 0 auto; padding: 0 1.5rem; }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;color:#e2e8f0;background:#0f172a;line-height:1.6}
+.container{max-width:1120px;margin:0 auto;padding:0 1.5rem}
 
 /* Nav */
-nav { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.5rem; max-width: 1120px; margin: 0 auto; }
-nav .logo { font-weight: 700; font-size: 1.25rem; color: #0f172a; text-decoration: none; }
-nav .logo span { color: #6366f1; }
-nav .nav-links { display: flex; gap: 2rem; align-items: center; }
-nav .nav-links a { text-decoration: none; color: #64748b; font-size: 0.9rem; font-weight: 500; }
-nav .nav-links a:hover { color: #1e293b; }
-.btn { display: inline-block; padding: 0.6rem 1.5rem; border-radius: 8px; font-weight: 600; font-size: 0.9rem; text-decoration: none; cursor: pointer; border: none; }
-.btn-primary { background: #6366f1; color: #fff; }
-.btn-primary:hover { background: #4f46e5; }
-.btn-outline { background: transparent; color: #6366f1; border: 1.5px solid #6366f1; }
-.btn-outline:hover { background: #eef2ff; }
+nav{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem;max-width:1120px;margin:0 auto}
+nav .logo{font-weight:700;font-size:1.25rem;color:#f1f5f9;text-decoration:none}
+nav .logo span{color:#818cf8}
+nav .nav-links{display:flex;gap:2rem;align-items:center}
+nav .nav-links a{text-decoration:none;color:#94a3b8;font-size:0.9rem;font-weight:500}
+nav .nav-links a:hover{color:#e2e8f0}
+.btn{display:inline-block;padding:0.6rem 1.5rem;border-radius:8px;font-weight:600;font-size:0.9rem;text-decoration:none;cursor:pointer;border:none}
+.btn-primary{background:#818cf8;color:#0f172a}
+.btn-primary:hover{background:#6366f1}
+.btn-outline{background:transparent;color:#818cf8;border:1.5px solid #818cf8}
+.btn-outline:hover{background:#1e293b}
 
 /* Hero */
-.hero { text-align: center; padding: 5rem 1.5rem 4rem; }
-.hero h1 { font-size: 2.75rem; font-weight: 800; line-height: 1.2; color: #0f172a; max-width: 720px; margin: 0 auto 1rem; }
-.hero h1 span { color: #6366f1; }
-.hero p { font-size: 1.15rem; color: #64748b; max-width: 600px; margin: 0 auto 2rem; }
-.hero-actions { display: flex; gap: 1rem; justify-content: center; }
-.hero-search { margin-top: 3rem; max-width: 520px; margin-left: auto; margin-right: auto; display: flex; gap: 0; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-.hero-search input { flex: 1; padding: 1rem 1.25rem; border: none; font-size: 0.9rem; outline: none; font-family: "SF Mono", "Fira Code", "JetBrains Mono", monospace; background: #fff; color: #1e293b; }
-.hero-search input::placeholder { color: #94a3b8; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-.hero-search button { padding: 1rem 1.5rem; background: #6366f1; color: #fff; border: none; font-weight: 600; cursor: pointer; font-size: 0.9rem; }
-.hero-search button:hover { background: #4f46e5; }
-
-/* Trust badges */
-.trust { text-align: center; padding: 2rem 1.5rem; color: #94a3b8; font-size: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; }
-.trust .logos { display: flex; justify-content: center; gap: 2.5rem; margin-top: 1rem; flex-wrap: wrap; }
-.trust .logos span { font-weight: 600; color: #64748b; font-size: 0.95rem; }
+.hero{text-align:center;padding:5rem 1.5rem 4rem}
+.hero h1{font-size:2.75rem;font-weight:800;line-height:1.2;color:#f1f5f9;max-width:720px;margin:0 auto 1rem}
+.hero h1 span{color:#818cf8}
+.hero p{font-size:1.15rem;color:#94a3b8;max-width:600px;margin:0 auto 2rem}
+.hero-actions{display:flex;gap:1rem;justify-content:center}
+.hero-search{margin-top:3rem;max-width:640px;margin-left:auto;margin-right:auto;display:flex;gap:0;border-radius:10px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.3)}
+.hero-search input{flex:1;padding:1rem 1.25rem;border:none;font-size:0.9rem;outline:none;font-family:"SF Mono","Fira Code","JetBrains Mono",monospace;background:#1e293b;color:#e2e8f0}
+.hero-search input::placeholder{color:#64748b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.hero-search button{padding:1rem 1.5rem;background:#818cf8;color:#0f172a;border:none;font-weight:600;cursor:pointer;font-size:0.9rem}
+.hero-search button:hover{background:#6366f1}
 
 /* Section common */
-.section { padding: 4rem 1.5rem; }
-.section-dark { background: #0f172a; color: #e2e8f0; }
-.section-dark h2 { color: #f1f5f9; }
-.section-dark .subtitle { color: #94a3b8; }
-.section h2 { text-align: center; font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; }
-.section .subtitle { text-align: center; color: #64748b; font-size: 1.05rem; margin-bottom: 3rem; }
+.section{padding:4rem 1.5rem}
+.section h2{text-align:center;font-size:2rem;font-weight:700;margin-bottom:0.5rem;color:#f1f5f9}
+.section .subtitle{text-align:center;color:#94a3b8;font-size:1.05rem;margin-bottom:3rem}
 
 /* How it works */
-.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; max-width: 960px; margin: 0 auto; }
-.step { text-align: center; padding: 2rem; }
-.step .num { width: 48px; height: 48px; background: #eef2ff; color: #6366f1; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.25rem; margin: 0 auto 1rem; }
-.step h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
-.step p { color: #64748b; font-size: 0.9rem; }
-.step-arrow { display: flex; align-items: center; color: #cbd5e1; font-size: 1.5rem; }
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:2rem;max-width:960px;margin:0 auto}
+.step{text-align:center;padding:2rem}
+.step .num{width:48px;height:48px;background:#1e293b;color:#818cf8;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.25rem;margin:0 auto 1rem}
+.step h3{font-size:1.1rem;margin-bottom:0.5rem;color:#f1f5f9}
+.step p{color:#94a3b8;font-size:0.9rem}
 
-/* Use cases grid */
-.use-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; max-width: 960px; margin: 0 auto; }
-.use-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 2rem; text-align: center; }
-.use-card .icon { font-size: 2rem; margin-bottom: 1rem; }
-.use-card h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
-.use-card p { color: #64748b; font-size: 0.85rem; line-height: 1.5; }
-.use-card.highlight { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; position: relative; }
-.use-card.highlight::before { content: "Primary"; position: absolute; top: -0.6rem; left: 50%; transform: translateX(-50%); background: #6366f1; color: #fff; font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.75rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+/* Use cases */
+.use-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2rem;max-width:960px;margin:0 auto}
+.use-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2rem;text-align:center}
+.use-card .icon{font-size:2rem;margin-bottom:1rem}
+.use-card h3{font-size:1.05rem;margin-bottom:0.5rem;color:#f1f5f9}
+.use-card p{color:#94a3b8;font-size:0.85rem;line-height:1.5}
+.use-card.highlight{border-color:#818cf8;box-shadow:0 0 0 1px #818cf8;position:relative}
+.use-card.highlight::before{content:"Primary";position:absolute;top:-0.6rem;left:50%;transform:translateX(-50%);background:#818cf8;color:#0f172a;font-size:0.7rem;font-weight:600;padding:0.15rem 0.75rem;border-radius:4px;text-transform:uppercase;letter-spacing:0.05em}
 
-/* Live Demo */
-.demo-box { background: #1e293b; border-radius: 12px; padding: 2rem; max-width: 720px; margin: 0 auto; }
-.demo-box .label { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
-.demo-box .demo-row { display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid #334155; font-size: 0.9rem; }
-.demo-box .demo-row:last-child { border: none; }
-.demo-box .demo-row .key { color: #94a3b8; }
-.demo-box .demo-row .value { color: #e2e8f0; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.8rem; word-break: break-all; max-width: 60%; text-align: right; }
-.demo-box .demo-row .value.green { color: #34d399; }
-.demo-box .view-link { display: block; text-align: center; margin-top: 1.5rem; }
-.demo-box .view-link a { color: #818cf8; text-decoration: none; font-size: 0.9rem; }
-.demo-box .view-link a:hover { text-decoration: underline; }
+/* Live demo receipt */
+.demo-box{background:#1e293b;border-radius:12px;padding:2rem;max-width:720px;margin:0 auto;border:1px solid #334155}
+.demo-box .label{color:#64748b;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1rem}
+.demo-row{display:flex;justify-content:space-between;padding:0.75rem 0;border-bottom:1px solid #334155;font-size:0.9rem}
+.demo-row:last-child{border:none}
+.demo-row .key{color:#94a3b8}
+.demo-row .value{color:#e2e8f0;font-family:"SF Mono","Fira Code",monospace;font-size:0.8rem;word-break:break-all;max-width:60%;text-align:right}
+.demo-row .value.green{color:#34d399}
+.demo-box .view-link{display:block;text-align:center;margin-top:1.5rem}
+.demo-box .view-link a{color:#818cf8;text-decoration:none;font-size:0.9rem}
+.demo-box .view-link a:hover{text-decoration:underline}
 
 /* Pricing */
-.pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; max-width: 960px; margin: 0 auto; }
-.price-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 2.5rem 2rem; text-align: center; position: relative; }
-.price-card.featured { border-color: #6366f1; box-shadow: 0 4px 24px rgba(99,102,241,0.12); }
-.price-card.popular::before { content: "Most Popular"; position: absolute; top: -0.6rem; left: 50%; transform: translateX(-50%); background: #6366f1; color: #fff; font-size: 0.7rem; font-weight: 600; padding: 0.2rem 1rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
-.price-card h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
-.price-card .price { font-size: 2.5rem; font-weight: 800; color: #0f172a; }
-.price-card .price span { font-size: 1rem; font-weight: 400; color: #64748b; }
-.price-card .desc { color: #64748b; font-size: 0.85rem; margin: 0.5rem 0 1.5rem; }
-.price-card ul { list-style: none; text-align: left; margin-bottom: 1.5rem; }
-.price-card ul li { padding: 0.4rem 0; font-size: 0.85rem; color: #475569; }
-.price-card ul li::before { content: "✓ "; color: #6366f1; font-weight: 700; }
+.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2rem;max-width:960px;margin:0 auto}
+.price-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2.5rem 2rem;text-align:center;position:relative}
+.price-card.featured{border-color:#818cf8;box-shadow:0 4px 24px rgba(99,102,241,0.15)}
+.price-card.popular::before{content:"Most Popular";position:absolute;top:-0.6rem;left:50%;transform:translateX(-50%);background:#818cf8;color:#0f172a;font-size:0.7rem;font-weight:600;padding:0.2rem 1rem;border-radius:4px;text-transform:uppercase;letter-spacing:0.05em}
+.price-card h3{font-size:1.1rem;margin-bottom:0.5rem;color:#f1f5f9}
+.price-card .price{font-size:2.5rem;font-weight:800;color:#f1f5f9}
+.price-card .price span{font-size:1rem;font-weight:400;color:#64748b}
+.price-card .desc{color:#94a3b8;font-size:0.85rem;margin:0.5rem 0 1.5rem}
+.price-card ul{list-style:none;text-align:left;margin-bottom:1.5rem}
+.price-card ul li{padding:0.4rem 0;font-size:0.85rem;color:#cbd5e1}
+.price-card ul li::before{content:"✓ ";color:#818cf8;font-weight:700}
 
-/* API Section */
-.api-box { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 2rem; max-width: 720px; margin: 0 auto; }
-.api-box h3 { font-size: 1rem; margin-bottom: 1rem; }
-.api-box code { display: block; background: #0f172a; color: #e2e8f0; padding: 1rem 1.25rem; border-radius: 8px; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.8rem; line-height: 1.6; overflow-x: auto; }
-.api-box .caption { margin-top: 0.75rem; font-size: 0.8rem; color: #64748b; }
+/* API section */
+.api-box{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2rem;max-width:720px;margin:0 auto}
+.api-box h3{font-size:1rem;margin-bottom:1rem;color:#f1f5f9}
+.api-box code{display:block;background:#0f172a;color:#e2e8f0;padding:1rem 1.25rem;border-radius:8px;font-family:"SF Mono","Fira Code",monospace;font-size:0.8rem;line-height:1.6;overflow-x:auto}
+.api-box .caption{margin-top:0.75rem;font-size:0.8rem;color:#64748b}
+.api-box .caption code{display:inline;padding:0.1rem 0.3rem;font-size:0.75rem}
 
 /* Footer */
-footer { border-top: 1px solid #e2e8f0; padding: 3rem 1.5rem; text-align: center; color: #94a3b8; font-size: 0.85rem; }
-footer a { color: #6366f1; text-decoration: none; }
-footer a:hover { text-decoration: underline; }
+footer{border-top:1px solid #1e293b;padding:3rem 1.5rem;text-align:center;color:#64748b;font-size:0.85rem}
+footer a{color:#818cf8;text-decoration:none}
+footer a:hover{text-decoration:underline}
 
-/* Responsive */
-@media (max-width: 768px) {
-  .hero h1 { font-size: 2rem; }
-  .steps, .use-grid, .pricing-grid { grid-template-columns: 1fr; }
-  nav .nav-links { display: none; }
-  .hero-search { flex-direction: column; border-radius: 8px; }
-  .hero-search input { text-align: center; }
-  .demo-box .demo-row { flex-direction: column; gap: 0.25rem; }
-  .demo-box .demo-row .value { text-align: left; max-width: 100%; }
+@media(max-width:768px){
+  .hero h1{font-size:2rem}
+  .steps,.use-grid,.pricing-grid{grid-template-columns:1fr}
+  nav .nav-links{display:none}
 }
 </style>
 </head>
@@ -122,21 +109,22 @@ footer a:hover { text-decoration: underline; }
     <a href="#how">How it works</a>
     <a href="#use-cases">Use cases</a>
     <a href="#pricing">Pricing</a>
-    <a href="/api/v1/verify/xrp-payment">API</a>
+    <a href="#api">API</a>
     <a href="https://github.com/joverman/xrplink">GitHub</a>
-    <a href="/dashboard" class="btn btn-outline">Dashboard</a>
+    <a href="/login">Log in</a>
+    <a href="/signup" class="btn btn-primary">Sign Up</a>
   </div>
 </nav>
 
 <section class="hero">
   <h1>Cryptographic Proof for <span>Every XRP Payment</span></h1>
-  <p>Generate tamper-proof, independently verifiable receipts for any XRP transaction. Built for compliance, audit, and merchant reconciliation — no blockchain expertise required.</p>
+  <p>Generate tamper-proof, independently verifiable receipts for any XRP transaction. Built for compliance, audit, and merchant reconciliation.</p>
   <div class="hero-actions">
-    <a href="#demo" class="btn btn-primary">See a Live Receipt</a>
-    <a href="#how" class="btn btn-outline">How It Works</a>
+    <a href="/signup" class="btn btn-primary">Get Started Free</a>
+    <a href="#demo" class="btn btn-outline">See a Live Receipt</a>
   </div>
   <div class="hero-search">
-    <input type="text" id="txSearch" placeholder="Paste an XRP transaction hash to look up a receipt..." spellcheck="false">
+    <input type="text" id="txSearch" placeholder="Paste any XRP transaction hash to see its data..." spellcheck="false">
     <button onclick="lookupTx()">Look Up</button>
   </div>
   <script>
@@ -149,17 +137,6 @@ footer a:hover { text-decoration: underline; }
   </script>
 </section>
 
-<div class="trust">
-  <span>Powered by</span>
-  <div class="logos">
-    <span>XRP Ledger</span>
-    <span>✦</span>
-    <span>Flare Network</span>
-    <span>✦</span>
-    <span>FDC Protocol</span>
-  </div>
-</div>
-
 <section class="section" id="how">
   <h2>How It Works</h2>
   <p class="subtitle">Three steps from transaction hash to verified receipt</p>
@@ -167,7 +144,7 @@ footer a:hover { text-decoration: underline; }
     <div class="step">
       <div class="num">1</div>
       <h3>Submit a Transaction</h3>
-      <p>Paste any XRP transaction hash — whether from a wallet, exchange, or block explorer. No account needed.</p>
+      <p>Paste any XRP transaction hash. The data is fetched directly from the XRP Ledger — no account needed.</p>
     </div>
     <div class="step">
       <div class="num">2</div>
@@ -189,17 +166,17 @@ footer a:hover { text-decoration: underline; }
     <div class="use-card highlight">
       <div class="icon">🏛️</div>
       <h3>Compliance Records</h3>
-      <p>Regulated businesses can produce court-admissible, cryptographically verifiable proof of any XRP payment. Satisfy FinCEN, FCA, and other regulatory requirements with tamper-evident receipts.</p>
+      <p>Regulated businesses can produce court-admissible, cryptographically verifiable proof of any XRP payment.</p>
     </div>
     <div class="use-card">
       <div class="icon">📋</div>
       <h3>Audit Trails</h3>
-      <p>External auditors can independently verify XRP payment records against the Flare blockchain — no need to trust a centralized API or an exported CSV. Reduce manual verification from hours to seconds.</p>
+      <p>External auditors can independently verify XRP payment records against the Flare blockchain — no centralized API needed.</p>
     </div>
     <div class="use-card">
       <div class="icon">🧾</div>
       <h3>Merchant Receipts</h3>
-      <p>Businesses accepting XRP payments get professional, verifiable receipts for their accounting. Share a link with your counterparty — they can verify the payment without running any software.</p>
+      <p>Businesses accepting XRP payments get professional, verifiable receipts for their accounting. Share a link with any counterparty.</p>
     </div>
   </div>
 </section>
@@ -220,21 +197,20 @@ footer a:hover { text-decoration: underline; }
   </div>
 </section>
 
-<section class="section section-dark" id="pricing">
-  <div class="container">
+<section class="section" id="pricing">
   <h2>Pricing</h2>
-  <p class="subtitle">Start free, scale as your compliance needs grow</p>
+  <p class="subtitle">Start with a free account, upgrade when you need verified receipts</p>
   <div class="pricing-grid">
     <div class="price-card">
       <h3>Free</h3>
       <div class="price">$0<span>/mo</span></div>
-      <p class="desc">Try it out with one receipt</p>
+      <p class="desc">Explore and test</p>
       <ul>
-        <li>1 verified receipt per month</li>
-        <li>REST API access</li>
-        <li>Public receipt pages</li>
+        <li>Receipt lookup (any XRP tx)</li>
+        <li>REST API access (10 req/min)</li>
+        <li>Free API key</li>
       </ul>
-      <a href="/dashboard" class="btn btn-outline" style="width:100%">Get Started</a>
+      <a href="/signup" class="btn btn-outline" style="width:100%">Sign Up Free</a>
     </div>
     <div class="price-card featured popular">
       <h3>Paid</h3>
@@ -242,12 +218,11 @@ footer a:hover { text-decoration: underline; }
       <p class="desc">For growing businesses</p>
       <ul>
         <li>5 verified receipts per month</li>
-        <li>API key authentication</li>
         <li>100 requests per minute</li>
         <li>Webhook callbacks</li>
         <li>Email support</li>
       </ul>
-      <a href="/dashboard" class="btn btn-primary" style="width:100%">Subscribe</a>
+      <a href="/signup" class="btn btn-primary" style="width:100%">Subscribe</a>
     </div>
     <div class="price-card">
       <h3>Pro</h3>
@@ -260,32 +235,37 @@ footer a:hover { text-decoration: underline; }
         <li>Admin API key management</li>
         <li>Priority support</li>
       </ul>
-      <a href="/dashboard" class="btn btn-outline" style="width:100%">Subscribe</a>
+      <a href="/signup" class="btn btn-outline" style="width:100%">Subscribe</a>
     </div>
   </div>
-  <p style="text-align:center; margin-top:2rem; color:#94a3b8; font-size:0.85rem;">
-    Need more receipts? <a href="mailto:hello@xrplink.io" style="color:#818cf8">Contact us</a> for enterprise pricing.
+  <p style="text-align:center;margin-top:2rem;color:#64748b;font-size:0.85rem">
+    Need more receipts? <a href="https://github.com/joverman/xrplink" style="color:#818cf8">Contact us</a> for enterprise pricing.
   </p>
-  </div>
 </section>
 
 <section class="section" id="api">
   <h2>API &amp; Integration</h2>
-  <p class="subtitle">Automate receipt generation from your applications</p>
+  <p class="subtitle">Verify receipts from your applications</p>
   <div class="api-box">
-    <h3>Verify an XRP Payment</h3>
-    <code>curl -X POST https://xrplink.io/api/v1/verify/xrp-payment \<br>  -H "Content-Type: application/json" \<br>  -H "X-API-Key: sk_live_..." \<br>  -d '{"txHash": "87AD359..."}'</code>
-    <p class="caption">Returns an attestation ID. Proof is ready in ~90 seconds. Check status with <code>GET /api/v1/status/:id</code>.</p>
+    <h3>Look Up a Receipt</h3>
+    <code>curl https://xrp-link.fly.dev/receipt/{txHash}</code>
+    <p class="caption">Returns an HTML receipt page. Works for any XRP transaction — no API key required.</p>
   </div>
-  <div style="text-align:center; margin-top:1.5rem">
-    <a href="https://github.com/joverman/xrplink" class="btn btn-outline">View API Docs on GitHub</a>
-    <a href="/dashboard" class="btn btn-primary" style="margin-left:0.5rem">Get Your API Key</a>
+  <br>
+  <div class="api-box">
+    <h3>Attest a New Payment <span style="color:#64748b;font-weight:400;font-size:0.85rem">(requires API key)</span></h3>
+    <code>curl -X POST https://xrp-link.fly.dev/api/v1/verify/xrp-payment \<br>  -H "Content-Type: application/json" \<br>  -H "X-API-Key: sk_live_..." \<br>  -d '{"txHash":"87AD359..."}'</code>
+    <p class="caption">Proof ready in ~90 seconds. Check status with <code>GET /api/v1/status/:id</code>.</p>
+  </div>
+  <div style="text-align:center;margin-top:1.5rem">
+    <a href="/signup" class="btn btn-primary">Get Your Free API Key</a>
+    <a href="https://github.com/joverman/xrplink" class="btn btn-outline" style="margin-left:0.5rem">API Docs</a>
   </div>
 </section>
 
 <footer>
   <p><a href="/">XRPLink</a> — Cryptographically Verified XRP Payment Receipts powered by the <a href="https://flare.network">Flare Network</a> FDC Protocol.</p>
-  <p style="margin-top:0.5rem"><a href="https://github.com/joverman/xrplink">GitHub</a> · <a href="mailto:hello@xrplink.io">Contact</a></p>
+  <p style="margin-top:0.5rem"><a href="https://github.com/joverman/xrplink">GitHub</a> · <a href="/signup">Sign Up</a> · <a href="/login">Log In</a></p>
 </footer>
 
 </body>
