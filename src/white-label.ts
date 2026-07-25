@@ -14,7 +14,7 @@ const defaults: WhiteLabelConfig = {
   logoUrl: "",
   primaryColor: "#3b82f6",
   secondaryColor: "#1e293b",
-  companyUrl: "https://xrplink.io",
+  companyUrl: "https://xrp-link.com",
   customDomain: "",
 };
 

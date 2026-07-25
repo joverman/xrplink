@@ -1,52 +1,43 @@
-> **⚠️ Alpha Software** — XRPLink is in active development. The pipeline is validated on
-> Coston2 testnet. Mainnet deployment and production use pending. Use at your own risk.
-
-# XRPLink — XRP Payment Attestation on Flare FDC
+# XRPLink — Cryptographically Verified XRP Payment Receipts
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**XRP data attestation layer for the Flare Network.** XRPLink wraps Flare's enshrined FDC (Flare Data Connector) protocol into a simple API + smart contract library, letting developers verify XRP payments and use XRP data on Flare without managing attestation rounds, Merkle proofs, or DA Layer interactions.
+**Generate tamper-proof, independently verifiable receipts for any XRP payment.** XRPLink attests XRP transactions through Flare's FDC protocol and provides a shareable receipt with a cryptographic Merkle proof. Built for compliance, audit, and merchant reconciliation.
+
+**Live at [https://xrp-link.com](https://xrp-link.com)**
 
 ## Quick Start
 
 ```bash
+# Visit the hosted app
+open https://xrp-link.com
+
+# Or run locally
 git clone <repo-url>
 cd xrplink
 npm install
 cp .env.example .env
 # Edit .env with your private key and API key
 npm run start:rest
-curl http://localhost:3000/health
 ```
-
-Then open `http://localhost:3000/dashboard` in your browser.
 
 ## Project Status
 
+Live on Flare mainnet. End-to-end pipeline validated: XRP tx → verifier API → FdcHub → DA Layer proof → on-chain verification.
+
 | Milestone | Status |
 |---|---|
-| Product sketch (v0.1) | ✅ Complete |
-| Project scaffolding (Hardhat + scripts) | ✅ Complete |
-| Coston2 wallet generated & funded (100 test FLR) | ✅ Complete |
-| XRP testnet tx with memo created | ✅ Complete |
-| FDC attestation request prepared (verifier = VALID) | ✅ Complete |
-| Attestation submitted to FdcHub on Coston2 | ✅ Complete (round 1389768) |
-| Proof retrieval from DA Layer | ✅ Complete — 3 Merkle entries |
-| PaymentVerifier.sol deployed to Coston2 | ✅ Complete (`0x6c3443ba8A11666BCEd0dA2f40c378a47b620cfc`) |
-| On-chain proof verification | ✅ Complete — payment count: 1 |
-| End-to-end pipeline validated | ✅ **Phase 0 Complete** |
-| REST API (Express) | ✅ Complete — verify, status, webhooks, health |
-| Proof caching | ✅ Complete — checks PaymentVerifier contract |
-| Background polling | ✅ Complete — polls DA Layer after submission |
-| API key authentication | ✅ Complete — X-API-Key header on all protected routes |
-| Subscription tiers | ✅ Complete — free (10/min), paid (100/min), pro (unlimited) |
-| Admin key management | ✅ Complete — create/list/delete keys (pro-only) |
-| Dashboard | ✅ Complete — HTML dashboard at /dashboard |
-| Persistent storage | ✅ Complete — JSON files in data/ |
-| Flare mainnet contract | ✅ Complete — PaymentVerifierMainnet.sol |
-| MCP Server (agent-native) | ✅ Complete — 5 tools, 5 resources, 4 prompts |
+| Mainnet deployment | ✅ **Live** (`PaymentVerifierMainnet` at `0xA10034...e14b`) |
+| End-to-end pipeline validated | ✅ Complete — XRP tx attested on mainnet |
+| User auth (signup/login) | ✅ Complete |
+| Receipt pages | ✅ Complete — shareable at `/receipt/:txHash` |
+| Dashboard | ✅ Complete — API key, usage stats, receipt history |
+| REST API | ✅ Complete — verify, status, webhooks, health |
+| API key auth + rate limiting | ✅ Complete |
+| Subscription tiers | ✅ Complete — free/paid/pro |
+| MCP Server | ✅ Complete — 5 tools, 4 prompts, 5 resources |
 | Hardhat test suite | ✅ Complete — 8 tests passing |
-| Open source release | ✅ Complete — MIT license |
+| Open source | ✅ MIT license |
 
 ## Server Modes
 
@@ -64,26 +55,28 @@ Then open `http://localhost:3000/dashboard` in your browser.
 | `ethers` | 5.8.0 | EVM interaction |
 | `tsx` | ^4.23.0 | TypeScript script runner |
 | `dotenv` | ^17.4.2 | .env config |
-| `xrpl` | via npm | XRP Ledger testnet interaction |
+| `express` | ^5.2.1 | HTTP API server |
 | `@flarenetwork/flare-periphery-contracts` | ^0.1.52 | FDC protocol interfaces |
 | `@modelcontextprotocol/sdk` | ^1.29.0 | MCP server framework |
-| `express` | ^5.2.1 | HTTP API server |
 
 ## API Endpoints
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| `POST` | `/auth/signup` | Public | Create account + free API key |
+| `POST` | `/auth/login` | Public | Log in and get a session token |
+| `GET` | `/me` | Bearer token | Current user info and API keys |
 | `GET` | `/health` | Public | Server status and network info |
-| `GET` | `/dashboard` | Public | HTML dashboard |
-| `POST` | `/api/v1/verify/xrp-payment` | API key | Submit txHash for attestation |
+| `GET` | `/dashboard` | Public | HTML user dashboard |
+| `GET` | `/receipt/:txHash` | Public | View a receipt (HTML) |
+| `POST` | `/api/v1/verify/xrp-payment` | API key | Attest an XRP tx |
 | `GET` | `/api/v1/status/:id` | API key | Check attestation by UUID |
 | `GET` | `/api/v1/status-by-tx/:txHash` | API key | Check attestation by txHash |
 | `POST` | `/api/v1/webhooks` | API key | Register webhook callback |
-| `GET\|PUT` | `/api/v1/admin/white-label` | Pro key | Manage branding |
-| `GET\|POST\|DELETE` | `/api/v1/admin/keys` | Pro key | Manage API keys |
+| `POST` | `/billing/subscribe` | Bearer token | Upgrade subscription |
+| `GET` | `/billing/portal` | Bearer token | Manage billing |
 | `GET` | `/mcp/resources` | Public | List MCP resources |
 | `GET` | `/mcp/prompts` | Public | List MCP prompts |
-| `GET` | `/mcp` | Public | SSE event stream |
 
 ## MCP Tools
 
@@ -99,29 +92,17 @@ Connect via stdio: `npm run start:mcp`
 
 ## Network Configuration
 
-### Coston2 (Flare Testnet)
-| Param | Value |
-|---|---|
-| RPC | `https://coston2-api.flare.network/ext/C/rpc` |
-| Chain ID | 114 |
-| FdcHub | `0x48aC463d7975828989331F4De43341627b9c5f1D` |
-| FdcVerification | `0x906507E0B64bcD494Db73bd0459d1C667e14B933` |
-| ContractRegistry | `0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019` |
-| Verifier API | `https://fdc-verifiers-testnet.flare.network` |
-| DA Layer | `https://ctn2-data-availability.flare.network` |
-| Public API Key | `00000000-0000-0000-0000-000000000000` |
-| FIRST_VOTING_ROUND | `1658430000` |
-| Voting duration | 90 seconds |
-| Faucet | `https://faucet.flare.network/coston2` |
-
-### Flare Mainnet
-| Param | Value |
-|---|---|
-| RPC | `https://flare-api.flare.network/ext/C/rpc` |
-| Chain ID | 14 |
-| FDC source ID | `XRP` (not `testXRP`) |
-
-Set `FLARE_NETWORK=flare` in `.env` to switch.
+| Param | Coston2 (Testnet) | Flare Mainnet |
+|---|---|---|
+| RPC | `https://coston2-api.flare.network` | `https://flare-api.flare.network` |
+| Chain ID | 114 | 14 |
+| FdcHub | `0x48aC463d7975828989331F4De43341627b9c5f1D` | `0xc25c749DC27Efb1864Cb3DADa8845B7687eB2d44` |
+| FdcVerification | `0x906507E0B64bcD494Db73bd0459d1C667e14B933` | `0x9394c7A36b3Da8de1b4F27cdD0a554dA4Fa7132d` |
+| DA Layer | `https://ctn2-data-availability.flare.network` | `https://flr-data-availability.flare.network` |
+| Verifier API | `https://fdc-verifiers-testnet.flare.network` | `https://fdc-verifiers-mainnet.flare.network` |
+| Source ID | `testXRP` | `XRP` |
+| First Voting Round | `1658430000` | `1658430000` |
+| Attestation fee | 1 test FLR | 20 FLR |
 
 ## Architecture
 
