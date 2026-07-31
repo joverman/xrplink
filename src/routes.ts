@@ -366,7 +366,8 @@ function renderDashboard(data) {
       <div class="upgrade-banner">
         <h3>Upgrade to create verified receipts</h3>
         <p>Your free plan includes receipt lookup only. Upgrade to attest payments and generate cryptographic proofs.</p>
-        <a href="#pricing" class="btn btn-primary">See Plans</a>
+        <button onclick="subscribe('paid')" class="btn btn-primary">Subscribe — \$29/mo</button>
+        <a href="/#pricing" class="btn btn-outline" style="margin-left:0.5rem">See All Plans</a>
       </div>
     \` : ''}
   \`;
@@ -411,6 +412,21 @@ function copyKey(btn) {
     btn.classList.add('copied');
     setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
   }).catch(() => {});
+}
+
+async function subscribe(tier) {
+  try {
+    const r = await fetch('/billing/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem(TOKEN_KEY) },
+      body: JSON.stringify({ tier })
+    });
+    const d = await r.json();
+    if (r.ok && d.url) { window.location.href = d.url; return; }
+    alert(d.message || 'Could not start subscription. Check that Stripe is configured.');
+  } catch(e) {
+    alert('Could not start subscription.');
+  }
 }
 
 document.getElementById('navLogout').addEventListener('click', (e) => {
