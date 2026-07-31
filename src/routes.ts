@@ -336,7 +336,7 @@ function renderDashboard(data) {
         <span class="val">\${apiKey.key}</span>
         <button class="copy-btn" onclick="copyKey(this)">Copy</button>
       </div>
-      <p style="color:#64748b;font-size:0.75rem;margin-top:0.5rem">Use this key in the \`X-API-Key\` header to call the API.</p>
+      <p style="color:#64748b;font-size:0.75rem;margin-top:0.5rem">Use this key in the <code>X-API-Key</code> header to call the API.</p>
     </div>
 
     <div class="stats">
