@@ -194,6 +194,191 @@ async function handleLogin(e) {
 </body></html>`);
 });
 
+// --- API Docs page ---
+
+const DOCS_STYLE = `
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.7;padding:2rem 1rem}
+.wrap{max-width:820px;margin:0 auto}
+nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:2.5rem}
+nav .logo{font-weight:700;font-size:1.25rem;color:#f1f5f9;text-decoration:none}
+nav .logo span{color:#818cf8}
+nav a.back{color:#94a3b8;text-decoration:none;font-size:0.85rem}
+nav a.back:hover{color:#e2e8f0}
+h1{font-size:1.75rem;margin-bottom:0.5rem;color:#f1f5f9}
+.subtitle{color:#94a3b8;font-size:0.95rem;margin-bottom:2rem}
+h2{font-size:1.15rem;margin:2.5rem 0 0.75rem;color:#f1f5f9;padding-top:1rem;border-top:1px solid #1e293b}
+h3{font-size:0.95rem;margin:1.5rem 0 0.5rem;color:#cbd5e1}
+p{color:#94a3b8;font-size:0.9rem;margin-bottom:0.75rem}
+code{font-family:"SF Mono","Fira Code","JetBrains Mono",monospace;font-size:0.82rem;background:#1e293b;padding:0.15rem 0.4rem;border-radius:4px;color:#e2e8f0}
+pre{background:#0b1220;border:1px solid #1e293b;border-radius:8px;padding:1rem 1.25rem;overflow-x:auto;margin:0.75rem 0 1.25rem}
+pre code{background:none;padding:0;font-size:0.8rem;line-height:1.6;color:#cbd5e1}
+.endpoint{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:1rem 1.25rem;margin:0.75rem 0}
+.endpoint .method{display:inline-block;font-weight:700;font-size:0.75rem;padding:0.15rem 0.5rem;border-radius:4px;margin-right:0.6rem;letter-spacing:0.03em}
+.method.get{background:#1e3a5f;color:#60a5fa}
+.method.post{background:#065f46;color:#6ee7b7}
+.method.put{background:#5b3a1e;color:#fcd34d}
+.method.delete{background:#7f1d1d;color:#fca5a5}
+.endpoint .path{font-family:"SF Mono","Fira Code",monospace;font-size:0.85rem;color:#e2e8f0}
+.endpoint .desc{font-size:0.8rem;color:#94a3b8;margin-top:0.35rem}
+table{width:100%;border-collapse:collapse;font-size:0.85rem;margin:0.75rem 0 1.25rem}
+th{text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid #334155;color:#64748b;font-weight:600;text-transform:uppercase;font-size:0.7rem;letter-spacing:0.05em}
+td{padding:0.5rem 0.75rem;border-bottom:1px solid #1e293b;color:#cbd5e1}
+.badge{display:inline-block;padding:0.15rem 0.5rem;border-radius:4px;font-size:0.7rem;font-weight:600}
+.badge.auth{background:#1e3a5f;color:#60a5fa}
+.badge.pub{background:#1e293b;color:#94a3b8}
+.badge.api-key{background:#3b1e5f;color:#c084fc}
+.toc{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:1.25rem 1.5rem;margin-bottom:2rem}
+.toc a{display:block;color:#818cf8;text-decoration:none;font-size:0.85rem;padding:0.2rem 0}
+.toc a:hover{color:#a5b4fc}
+`;
+
+router.get("/docs", (_req: Request, res: Response) => {
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>API Docs — XRPLink</title><style>${DOCS_STYLE}</style></head>
+<body>
+<div class="wrap">
+<nav>
+  <a href="/" class="logo">XRPL<span>ink</span></a>
+  <a href="/" class="back">← Back to home</a>
+</nav>
+
+<h1>XRPLink API Documentation</h1>
+<p class="subtitle">Generate cryptographically verified receipts for XRP payments on the Flare Network.</p>
+
+<div class="toc">
+  <strong style="color:#f1f5f9;font-size:0.85rem">Contents</strong>
+  <a href="#auth">Authentication</a>
+  <a href="#receipts">Receipts</a>
+  <a href="#attestation">Attestation</a>
+  <a href="#billing">Billing</a>
+  <a href="#mcp">MCP Server</a>
+  <a href="#errors">Errors</a>
+</div>
+
+<h2 id="auth">Authentication</h2>
+<p>XRPLink uses <strong>API keys</strong> for the attestation API and <strong>JWT bearer tokens</strong> for account and billing endpoints. Create an account to get a free API key.</p>
+
+<h3>Create an account</h3>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/auth/signup</span><span class="badge pub" style="margin-left:0.5rem">public</span><div class="desc">Creates a user and returns a session token plus a free-tier API key.</div></div>
+<pre><code>curl -X POST https://xrp-link.com/auth/signup \\
+  -H "Content-Type: application/json" \\
+  -d '{"email":"you@example.com","password":"yourpassword"}'
+
+// Response
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "apiKey": "sk_live_..."
+}</code></pre>
+
+<h3>Log in</h3>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/auth/login</span><span class="badge pub" style="margin-left:0.5rem">public</span><div class="desc">Returns a session token and your API key.</div></div>
+<pre><code>curl -X POST https://xrp-link.com/auth/login \\
+  -H "Content-Type: application/json" \\
+  -d '{"email":"you@example.com","password":"yourpassword"}'</code></pre>
+
+<h3>Current user</h3>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/me</span><span class="badge auth" style="margin-left:0.5rem">bearer token</span><div class="desc">Returns your user info, plan tier, and API keys.</div></div>
+<pre><code>curl https://xrp-link.com/me \\
+  -H "Authorization: Bearer &lt;your-token&gt;"</code></pre>
+
+<h2 id="receipts">Receipts</h2>
+
+<h3>View a receipt</h3>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/receipt/:txHash</span><span class="badge pub" style="margin-left:0.5rem">public</span><div class="desc">Returns an HTML receipt page for any XRP transaction. No API key required. If the transaction is already attested, the full cryptographic receipt is shown; otherwise the XRP Ledger data is displayed with instructions to attest.</div></div>
+<pre><code>curl https://xrp-link.com/receipt/87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F</code></pre>
+
+<h2 id="attestation">Attestation</h2>
+<p>Attesting a payment generates the on-chain cryptographic proof. This requires an API key with a paid or pro plan. Proofs are ready in ~90-180 seconds (FDC voting round).</p>
+
+<h3>Verify an XRP payment</h3>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/api/v1/verify/xrp-payment</span><span class="badge api-key" style="margin-left:0.5rem">API key</span><div class="desc">Submits a transaction hash for attestation. Returns an attestation ID and FDC round.</div></div>
+<pre><code>curl -X POST https://xrp-link.com/api/v1/verify/xrp-payment \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: sk_live_..." \\
+  -d '{"txHash":"87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F"}'
+
+// Response (HTTP 202)
+{
+  "id": "3f0c8e2a-...",
+  "txHash": "87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F",
+  "roundId": 1393372,
+  "status": "pending"
+}</code></pre>
+
+<h3>Check attestation status</h3>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/api/v1/status/:id</span><span class="badge api-key" style="margin-left:0.5rem">API key</span><div class="desc">Check the status of an attestation by UUID.</div></div>
+<pre><code>curl https://xrp-link.com/api/v1/status/3f0c8e2a-... \\
+  -H "X-API-Key: sk_live_..."
+
+// Statuses: pending, ready, verified, failed, not_found</code></pre>
+
+<h3>Look up by transaction</h3>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/api/v1/status-by-tx/:txHash</span><span class="badge api-key" style="margin-left:0.5rem">API key</span><div class="desc">Find an attestation by the original XRP transaction hash.</div></div>
+
+<h3>Register a webhook</h3>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/api/v1/webhooks</span><span class="badge api-key" style="margin-left:0.5rem">API key</span><div class="desc">Register a URL to receive attestation completion callbacks.</div></div>
+<pre><code>curl -X POST https://xrp-link.com/api/v1/webhooks \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: sk_live_..." \\
+  -d '{"url":"https://your-app.com/hooks/xrp"}'</code></pre>
+
+<h2 id="billing">Billing</h2>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/billing/subscribe</span><span class="badge auth" style="margin-left:0.5rem">bearer token</span><div class="desc">Create a Stripe Checkout session for a plan. Returns a redirect URL.</div></div>
+<pre><code>curl -X POST https://xrp-link.com/billing/subscribe \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer &lt;your-token&gt;" \\
+  -d '{"tier":"paid"}'
+
+// Response
+{ "url": "https://checkout.stripe.com/c/pay/..." }</code></pre>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/billing/portal</span><span class="badge auth" style="margin-left:0.5rem">bearer token</span><div class="desc">Get a link to manage or cancel your subscription.</div></div>
+
+<h2 id="mcp">MCP Server</h2>
+<p>XRPLink exposes an MCP server so AI agents can verify payments directly. Connect via stdio or the HTTP endpoint.</p>
+
+<table>
+<tr><th>Tool</th><th>Description</th></tr>
+<tr><td><code>verify_xrp_payment</code></td><td>Submit a txHash for attestation</td></tr>
+<tr><td><code>get_attestation_status</code></td><td>Check attestation by UUID</td></tr>
+<tr><td><code>lookup_attestation_by_tx</code></td><td>Find attestation by txHash</td></tr>
+<tr><td><code>get_attestation_by_round</code></td><td>List attestations by round ID</td></tr>
+<tr><td><code>get_server_info</code></td><td>Server, network, and contract info</td></tr>
+</table>
+
+<pre><code># stdio transport (local agents)
+npm run start:mcp
+
+# HTTP/SSE endpoint
+curl https://xrp-link.com/mcp</code></pre>
+
+<h2 id="errors">Errors</h2>
+<p>Errors are returned as JSON with a machine-readable <code>code</code> and a human-readable <code>message</code>:</p>
+<pre><code>{
+  "error": "INVALID_TX_HASH",
+  "message": "Expected 64 hex characters for transaction hash",
+  "suggestedAction": "Provide a valid XRP transaction hash..."
+}</code></pre>
+
+<table>
+<tr><th>Code</th><th>Meaning</th></tr>
+<tr><td><code>MISSING_API_KEY</code></td><td>X-API-Key header missing</td></tr>
+<tr><td><code>INVALID_API_KEY</code></td><td>API key invalid or deactivated</td></tr>
+<tr><td><code>RATE_LIMITED</code></td><td>Per-minute limit exceeded for your tier</td></tr>
+<tr><td><code>INVALID_TX_HASH</code></td><td>Not a valid 64-hex transaction hash</td></tr>
+<tr><td><code>SUBMIT_FAILED</code></td><td>Attestation submission to FdcHub failed</td></tr>
+<tr><td><code>NOT_FOUND</code></td><td>Resource not found</td></tr>
+<tr><td><code>FORBIDDEN</code></td><td>Requires a higher plan tier</td></tr>
+<tr><td><code>AUTH_FAILED</code></td><td>Invalid email/password</td></tr>
+<tr><td><code>MISSING_AUTH</code></td><td>Bearer token missing</td></tr>
+<tr><td><code>INVALID_AUTH</code></td><td>Bearer token invalid or expired</td></tr>
+</table>
+
+</div>
+</body></html>`);
+});
+
 // --- Contact page ---
 
 const CONTACT_STYLE = `

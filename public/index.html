@@ -248,18 +248,18 @@ footer a:hover{text-decoration:underline}
   <p class="subtitle">Verify receipts from your applications</p>
   <div class="api-box">
     <h3>Look Up a Receipt</h3>
-    <code>curl https://xrp-link.fly.dev/receipt/{txHash}</code>
+    <code>curl https://xrp-link.com/receipt/{txHash}</code>
     <p class="caption">Returns an HTML receipt page. Works for any XRP transaction — no API key required.</p>
   </div>
   <br>
   <div class="api-box">
     <h3>Attest a New Payment <span style="color:#64748b;font-weight:400;font-size:0.85rem">(requires API key)</span></h3>
-    <code>curl -X POST https://xrp-link.fly.dev/api/v1/verify/xrp-payment \<br>  -H "Content-Type: application/json" \<br>  -H "X-API-Key: sk_live_..." \<br>  -d '{"txHash":"87AD359..."}'</code>
+    <code>curl -X POST https://xrp-link.com/api/v1/verify/xrp-payment \<br>  -H "Content-Type: application/json" \<br>  -H "X-API-Key: sk_live_..." \<br>  -d '{"txHash":"87AD359..."}'</code>
     <p class="caption">Proof ready in ~90 seconds. Check status with <code>GET /api/v1/status/:id</code>.</p>
   </div>
   <div style="text-align:center;margin-top:1.5rem">
     <a href="/signup" class="btn btn-primary">Get Your Free API Key</a>
-    <a href="https://github.com/joverman/xrplink" class="btn btn-outline" style="margin-left:0.5rem">API Docs</a>
+    <a href="/docs" class="btn btn-outline" style="margin-left:0.5rem">API Docs</a>
   </div>
 </section>
 
