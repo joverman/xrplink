@@ -194,6 +194,113 @@ async function handleLogin(e) {
 </body></html>`);
 });
 
+// --- Contact page ---
+
+const CONTACT_STYLE = `
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6;padding:2rem 1rem}
+.wrap{max-width:560px;margin:0 auto}
+nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem}
+nav .logo{font-weight:700;font-size:1.25rem;color:#f1f5f9;text-decoration:none}
+nav .logo span{color:#818cf8}
+nav a.back{color:#94a3b8;text-decoration:none;font-size:0.85rem}
+nav a.back:hover{color:#e2e8f0}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2.5rem}
+.card h1{font-size:1.25rem;margin-bottom:0.25rem}
+.card .subtitle{color:#94a3b8;font-size:0.85rem;margin-bottom:1.5rem}
+.form-group{margin-bottom:1rem}
+.form-group label{display:block;font-size:0.85rem;font-weight:600;color:#94a3b8;margin-bottom:0.35rem}
+.form-group input,.form-group textarea{width:100%;padding:0.7rem 0.85rem;border:1px solid #334155;border-radius:6px;font-size:0.9rem;background:#0f172a;color:#e2e8f0;outline:none;font-family:inherit}
+.form-group input:focus,.form-group textarea:focus{border-color:#818cf8}
+.form-group textarea{min-height:140px;resize:vertical}
+.btn{display:block;width:100%;padding:0.7rem;border-radius:8px;font-weight:600;font-size:0.9rem;cursor:pointer;border:none;text-align:center;text-decoration:none}
+.btn-primary{background:#818cf8;color:#0f172a}
+.btn-primary:hover{background:#6366f1}
+.btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+.msg{display:none;padding:0.6rem 0.85rem;border-radius:6px;font-size:0.85rem;margin-bottom:1rem}
+.msg.success{display:block;background:#065f46;color:#6ee7b7}
+.msg.error{display:block;background:#7f1d1d;color:#fca5a5}
+`;
+
+router.get("/contact", (_req: Request, res: Response) => {
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Contact — XRPLink</title><style>${CONTACT_STYLE}</style></head>
+<body>
+<div class="wrap">
+<nav>
+  <a href="/" class="logo">XRPL<span>ink</span></a>
+  <a href="/" class="back">← Back to home</a>
+</nav>
+<div class="card">
+<h1>Contact us</h1>
+<p class="subtitle">Questions, enterprise pricing, or partnerships — we'll get back to you.</p>
+<div class="msg" id="msg"></div>
+<form id="contactForm" onsubmit="return handleContact(event)">
+<div class="form-group"><label>Name</label><input type="text" id="name" required placeholder="Your name"></div>
+<div class="form-group"><label>Email</label><input type="email" id="email" required placeholder="you@example.com"></div>
+<div class="form-group"><label>Message</label><textarea id="message" required placeholder="How can we help?"></textarea></div>
+<button type="submit" class="btn btn-primary" id="submitBtn">Send Message</button>
+</form>
+</div>
+</div>
+<script>
+async function handleContact(e) {
+  e.preventDefault();
+  const msg = document.getElementById('msg');
+  const btn = document.getElementById('submitBtn');
+  msg.className = 'msg';
+  msg.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  try {
+    const r = await fetch('/contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: document.getElementById('name').value,
+        email: document.getElementById('email').value,
+        message: document.getElementById('message').value
+      })
+    });
+    const d = await r.json();
+    if (r.ok) {
+      msg.className = 'msg success';
+      msg.textContent = 'Message sent! We will get back to you soon.';
+      msg.style.display = 'block';
+      document.getElementById('contactForm').reset();
+    } else {
+      msg.className = 'msg error';
+      msg.textContent = d.message || 'Could not send message. Please try again.';
+      msg.style.display = 'block';
+    }
+  } catch(err) {
+    msg.className = 'msg error';
+    msg.textContent = 'Could not send message. Please try again.';
+    msg.style.display = 'block';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Send Message';
+}
+</script>
+</body></html>`);
+});
+
+router.post("/contact", async (req: Request, res: Response) => {
+  const { name, email, message } = req.body || {};
+  if (!name || !email || !message) {
+    return res.status(400).json(formatError("MISSING_PARAMS", undefined, "Name, email, and message are required"));
+  }
+  try {
+    const { sendContactEmail } = await import("./email.js");
+    await sendContactEmail({ name: String(name).slice(0, 200), email: String(email).slice(0, 200), message: String(message).slice(0, 5000) });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("Contact email failed:", err);
+    return res.status(500).json(formatError("INTERNAL_ERROR"));
+  }
+});
+
 // --- Public endpoints ---
 
 router.get("/health", (_req: Request, res: Response) => {

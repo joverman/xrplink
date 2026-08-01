@@ -29,3 +29,19 @@ export async function sendPasswordResetEmail(email: string, token: string) {
 <p>This link expires in 1 hour.</p>`,
   });
 }
+
+export async function sendContactEmail(contact: { name: string; email: string; message: string }) {
+  if (!resend) {
+    console.log("Resend not configured — contact message not sent");
+    return;
+  }
+  await resend.emails.send({
+    from: FROM,
+    to: "joverman@protonmail.com",
+    subject: `XRPLink contact form: ${contact.name}`,
+    html: `<p><strong>Name:</strong> ${contact.name}</p>
+<p><strong>Email:</strong> ${contact.email}</p>
+<p><strong>Message:</strong></p>
+<p style="white-space:pre-wrap">${contact.message}</p>`,
+  });
+}
