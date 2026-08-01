@@ -111,8 +111,7 @@ footer a:hover{text-decoration:underline}
     <a href="#pricing">Pricing</a>
     <a href="#api">API</a>
     <a href="https://github.com/joverman/xrplink">GitHub</a>
-    <a href="/login">Log in</a>
-    <a href="/signup" class="btn btn-primary">Sign Up</a>
+    <span id="authNav"></span>
   </div>
 </nav>
 
@@ -267,6 +266,32 @@ footer a:hover{text-decoration:underline}
   <p><a href="/">XRPLink</a> — Cryptographically Verified XRP Payment Receipts powered by the <a href="https://flare.network">Flare Network</a> FDC Protocol.</p>
   <p style="margin-top:0.5rem"><a href="https://github.com/joverman/xrplink">GitHub</a> · <a href="/contact">Contact</a> · <a href="/signup">Sign Up</a> · <a href="/login">Log In</a></p>
 </footer>
+
+<script>
+async function updateAuthNav() {
+  const el = document.getElementById('authNav');
+  if (!el) return;
+  try {
+    const r = await fetch('/me', { credentials: 'include' });
+    if (r.ok) {
+      const data = await r.json();
+      el.innerHTML = '<a href="/dashboard">Dashboard</a> <a href="#" onclick="logout(event)" style="margin-left:0.75rem">Log out</a> <span style="margin-left:0.75rem;color:#94a3b8;font-size:0.8rem">' + data.user.email + '</span>';
+    } else {
+      el.innerHTML = '<a href="/login">Log in</a> <a href="/signup" class="btn btn-primary" style="margin-left:0.75rem">Sign Up</a>';
+    }
+  } catch(e) {
+    el.innerHTML = '<a href="/login">Log in</a> <a href="/signup" class="btn btn-primary" style="margin-left:0.75rem">Sign Up</a>';
+  }
+}
+async function logout(e) {
+  e.preventDefault();
+  try { await fetch('/auth/logout', { method: 'POST', credentials: 'include' }); } catch(err) {}
+  localStorage.removeItem('xrplink_token');
+  localStorage.removeItem('xrplink_api_key');
+  window.location.href = '/';
+}
+updateAuthNav();
+</script>
 
 </body>
 </html>

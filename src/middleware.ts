@@ -3,6 +3,7 @@ import { store } from "./store.js";
 import { config } from "./config.js";
 import { formatError } from "./mcp/errors.js";
 import { getUserFromToken } from "./auth.js";
+import { getSessionToken } from "./session.js";
 
 export function requireApiKey(req: Request, res: Response, next: NextFunction) {
   const key = req.headers["x-api-key"] as string;
@@ -34,7 +35,7 @@ export function requireApiKey(req: Request, res: Response, next: NextFunction) {
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const auth = req.headers.authorization || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : getSessionToken(req);
   if (!token) {
     return res.status(401).json(formatError("MISSING_AUTH"));
   }
@@ -48,7 +49,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 
 export function optionalUser(req: Request, _res: Response, next: NextFunction) {
   const auth = req.headers.authorization || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : getSessionToken(req);
   if (token) {
     const user = getUserFromToken(token);
     if (user) (req as any).user = user;

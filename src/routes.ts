@@ -28,6 +28,8 @@ router.post("/auth/signup", async (req: Request, res: Response) => {
   if (!result.ok) {
     return res.status(400).json(formatError("AUTH_FAILED", { message: result.error }));
   }
+  const { setSessionCookie } = await import("./session.js");
+  setSessionCookie(res, result.token!);
   return res.status(201).json({ token: result.token, apiKey: result.apiKey });
 });
 
@@ -37,7 +39,16 @@ router.post("/auth/login", async (req: Request, res: Response) => {
   if (!result.ok) {
     return res.status(401).json(formatError("AUTH_FAILED", { message: result.error }));
   }
+  const { setSessionCookie } = await import("./session.js");
+  setSessionCookie(res, result.token!);
   return res.json({ token: result.token, apiKey: result.apiKey });
+});
+
+router.post("/auth/logout", (_req: Request, res: Response) => {
+  import("./session.js").then(({ clearSessionCookie }) => {
+    clearSessionCookie(res);
+    res.json({ ok: true });
+  });
 });
 
 router.post("/auth/reset-password", async (req: Request, res: Response) => {
@@ -593,16 +604,25 @@ const API_KEY_KEY = 'xrplink_api_key';
 
 async function loadDashboard() {
   const token = localStorage.getItem(TOKEN_KEY);
-  if (!token) {
-    document.getElementById('loginPrompt').style.display = 'block';
-    document.getElementById('loading').style.display = 'none';
-    return;
-  }
+  const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
 
   try {
-    const r = await fetch('/me', { headers: { 'Authorization': 'Bearer ' + token } });
-    if (!r.ok) { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(API_KEY_KEY); window.location.reload(); return; }
+    const r = await fetch('/me', { headers });
+    if (r.status === 401) {
+      // Session cookie expired/invalid — show login prompt, keep stored key for reference
+      document.getElementById('loginPrompt').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+      return;
+    }
+    if (!r.ok) {
+      document.getElementById('loading').textContent = 'Could not load dashboard.';
+      return;
+    }
     const data = await r.json();
+    // Refresh stored API key from server response
+    if (data.apiKeys && data.apiKeys[0]) {
+      localStorage.setItem(API_KEY_KEY, data.apiKeys[0].key);
+    }
     renderDashboard(data);
   } catch(e) {
     document.getElementById('loading').textContent = 'Could not load dashboard.';
@@ -670,9 +690,9 @@ function renderDashboard(data) {
 
 async function loadReceipts() {
   try {
-    const r = await fetch('/receipts', {
-      headers: { 'Authorization': 'Bearer ' + localStorage.getItem(TOKEN_KEY) }
-    });
+    const token = localStorage.getItem(TOKEN_KEY);
+    const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+    const r = await fetch('/receipts', { headers });
     if (!r.ok) return;
     const receipts = await r.json();
     const tbody = document.getElementById('receiptBody');
@@ -708,9 +728,12 @@ function copyKey(btn) {
 
 async function subscribe(tier) {
   try {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
     const r = await fetch('/billing/subscribe', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem(TOKEN_KEY) },
+      headers,
       body: JSON.stringify({ tier })
     });
     const d = await r.json();
@@ -721,11 +744,12 @@ async function subscribe(tier) {
   }
 }
 
-document.getElementById('navLogout').addEventListener('click', (e) => {
+document.getElementById('navLogout').addEventListener('click', async (e) => {
   e.preventDefault();
+  try { await fetch('/auth/logout', { method: 'POST' }); } catch(err) {}
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(API_KEY_KEY);
-  window.location.reload();
+  window.location.href = '/';
 });
 
 loadDashboard();
