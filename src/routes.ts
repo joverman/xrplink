@@ -575,13 +575,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .login-card h2{font-size:1.25rem;margin-bottom:0.5rem}
 .login-card p{color:#94a3b8;margin-bottom:1.5rem}
 .empty{color:#64748b;font-size:0.85rem;padding:1rem 0;text-align:center}
+.quickstart{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem}
+.quickstart h2{font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:0.75rem}
+.quickstart code{display:block;background:#0f172a;color:#cbd5e1;padding:0.85rem 1rem;border-radius:8px;font-family:"SF Mono","Fira Code",monospace;font-size:0.78rem;line-height:1.7;overflow-x:auto;margin-bottom:0.75rem;white-space:pre}
+.quickstart .tip{font-size:0.8rem;color:#64748b}
+.usage-bar{background:#0f172a;border-radius:6px;height:6px;overflow:hidden;margin-top:0.5rem}
+.usage-bar .fill{background:#818cf8;height:100%;border-radius:6px;transition:width 0.3s}
 </style></head>
 <body>
 <div class="wrap">
 <div class="header">
   <a href="/" class="logo">XRPL<span>ink</span></a>
   <div class="nav">
-    <a href="/" id="navHome">Home</a>
+    <a href="/">Home</a>
+    <a href="/docs">API Docs</a>
+    <a href="/#pricing">Pricing</a>
+    <a href="/contact">Contact</a>
+    <span id="navEmail" style="color:#94a3b8;font-size:0.8rem;margin-left:1.5rem;display:none"></span>
     <a href="#" id="navLogout" style="display:none">Log out</a>
   </div>
 </div>
@@ -642,6 +652,8 @@ function renderDashboard(data) {
   document.getElementById('loading').style.display = 'none';
   document.getElementById('dashboardContent').style.display = 'block';
   document.getElementById('navLogout').style.display = 'inline';
+  const navEmail = document.getElementById('navEmail');
+  if (navEmail) { navEmail.textContent = user.email; navEmail.style.display = 'inline'; }
 
   document.getElementById('dashboardContent').innerHTML = \`
     <div class="api-card">
@@ -655,8 +667,23 @@ function renderDashboard(data) {
 
     <div class="stats">
       <div class="stat-card"><div class="num">\${tier.charAt(0).toUpperCase() + tier.slice(1)}</div><div class="label">Plan</div></div>
-      <div class="stat-card"><div class="num">\${monthlyLimit === 0 ? 'Lookup only' : monthlyLimit}</div><div class="label">Receipts / month</div></div>
-      <div class="stat-card"><div class="num"><span class="tier \${tier}">\${tier}</span></div><div class="label">Rate limit</div></div>
+      <div class="stat-card"><div class="num">\${monthlyLimit === 0 ? 'Unlimited lookups' : monthlyLimit}</div><div class="label">Receipts / month</div></div>
+      <div class="stat-card"><div class="num">\${usage}</div><div class="label">API requests</div></div>
+    </div>
+    \${monthlyLimit > 0 ? \`
+      <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:0.85rem 1rem;margin-bottom:1.5rem;font-size:0.8rem;color:#94a3b8">
+        <span>Monthly receipt usage</span>
+        <div class="usage-bar"><div class="fill" style="width:\${Math.min((usage / (monthlyLimit * 10)) * 100, 100)}%"></div></div>
+      </div>
+    \` : ''}
+
+    <div class="quickstart">
+      <h2>Quick Start</h2>
+      <code>curl -X POST https://xrp-link.com/api/v1/verify/xrp-payment \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: \${apiKey.key}" \\
+  -d '{"txHash":"87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F"}'</code>
+      <p class="tip">Returns an attestation ID. Check status with <code>GET /api/v1/status/:id</code>. Proof is ready in ~90-180 seconds. Full reference at <a href="/docs" style="color:#818cf8">/docs</a>.</p>
     </div>
 
     <div class="verify-box">
