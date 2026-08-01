@@ -607,7 +607,9 @@ async function loadDashboard() {
   const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
 
   try {
-    const r = await fetch('/me', { headers });
+    // credentials:'include' ensures the session cookie is always sent,
+    // including after the cross-site Stripe Checkout redirect back.
+    const r = await fetch('/me', { headers, credentials: 'include' });
     if (r.status === 401) {
       // Session cookie expired/invalid — show login prompt, keep stored key for reference
       document.getElementById('loginPrompt').style.display = 'block';
@@ -681,8 +683,26 @@ function renderDashboard(data) {
         <button onclick="subscribe('paid')" class="btn btn-primary">Subscribe — \$29/mo</button>
         <a href="/#pricing" class="btn btn-outline" style="margin-left:0.5rem">See All Plans</a>
       </div>
-    \` : ''}
+    \` : \`
+      <div class="upgrade-banner" style="background:linear-gradient(135deg,#065f46,#0f172a);border-color:#065f46">
+        <h3>✓ You're on the \${tier.charAt(0).toUpperCase() + tier.slice(1)} plan</h3>
+        <p>You can now attest payments and generate verified receipts. Use the form above to verify an XRP payment.</p>
+      </div>
+    \`}
   \`;
+
+  // Show upgrade confirmation if we just returned from Stripe Checkout
+  const urlParams = new URLSearchParams(window.location.search);
+  const upgraded = urlParams.get('upgraded');
+  if (upgraded) {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'background:#065f46;color:#6ee7b7;padding:0.85rem 1rem;border-radius:8px;font-size:0.9rem;margin-bottom:1.5rem;text-align:center';
+    banner.textContent = 'Payment successful! Your plan has been upgraded to ' + upgraded.charAt(0).toUpperCase() + upgraded.slice(1) + '.';
+    const wrap = document.querySelector('.wrap');
+    if (wrap) wrap.insertBefore(banner, wrap.firstChild.nextSibling);
+    // Clean the URL so a refresh doesn't re-show the message
+    history.replaceState(null, '', '/dashboard');
+  }
 
   // Load receipts
   loadReceipts();
@@ -692,7 +712,7 @@ async function loadReceipts() {
   try {
     const token = localStorage.getItem(TOKEN_KEY);
     const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
-    const r = await fetch('/receipts', { headers });
+    const r = await fetch('/receipts', { headers, credentials: 'include' });
     if (!r.ok) return;
     const receipts = await r.json();
     const tbody = document.getElementById('receiptBody');

@@ -4,10 +4,15 @@ export const SESSION_COOKIE = "xrplink_session";
 const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export function setSessionCookie(res: Response, token: string) {
+  const isProd = process.env.NODE_ENV === "production" || !!process.env.FLY_APP_NAME;
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production" || !!process.env.FLY_APP_NAME,
-    sameSite: "lax",
+    secure: isProd,
+    // In production use SameSite=None so the cookie survives the cross-site
+    // Stripe Checkout redirect back to /dashboard?upgraded=... (Lax would be
+    // dropped). Requires Secure, which is true in production. In local dev
+    // (HTTP), fall back to Lax since None+!Secure is rejected by browsers.
+    sameSite: isProd ? "none" : "lax",
     maxAge: COOKIE_MAX_AGE,
     path: "/",
   });
