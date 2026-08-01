@@ -1,6 +1,13 @@
 # Contributing to XRPLink
 
-Thanks for your interest! XRPLink is in alpha — contributions are welcome.
+Thanks for your interest! XRPLink is source-available under BUSL-1.1 — contributions are welcome.
+
+## License Notice
+
+XRPLink is licensed under the Business Source License 1.1 (BUSL-1.1). By
+contributing, you agree that your contributions will be licensed under the
+same license. Non-commercial use is free; commercial use of the software as
+a hosted service requires a license from the Licensor. See [LICENSE](LICENSE).
 
 ## Getting Started
 

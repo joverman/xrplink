@@ -1,6 +1,6 @@
 # XRPLink — Cryptographically Verified XRP Payment Receipts
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
 **Generate tamper-proof, independently verifiable receipts for any XRP payment.** XRPLink attests XRP transactions through Flare's FDC protocol and provides a shareable receipt with a cryptographic Merkle proof. Built for compliance, audit, and merchant reconciliation.
 
@@ -37,7 +37,7 @@ Live on Flare mainnet. End-to-end pipeline validated: XRP tx → verifier API �
 | Subscription tiers | ✅ Complete — free/paid/pro |
 | MCP Server | ✅ Complete — 5 tools, 4 prompts, 5 resources |
 | Hardhat test suite | ✅ Complete — 8 tests passing |
-| Open source | ✅ MIT license |
+| Open source | ✅ BUSL-1.1 (source-available) |
 
 ## Server Modes
 
@@ -143,8 +143,10 @@ Connect via stdio: `npm run start:mcp`
 See [CONTRIBUTING.md](CONTRIBUTING.md). All contributions welcome —
 bug fixes, feature requests, docs improvements, and test additions.
 
-XRPLink is open source (MIT) and built for the Flare ecosystem.
+XRPLink is source-available (BUSL-1.1) and built for the Flare ecosystem.
+Non-commercial use, evaluation, and personal use are free. Running XRPLink
+as a commercial service requires a license from the Licensor.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+BUSL-1.1 — see [LICENSE](LICENSE). Converts to MIT after four years.
