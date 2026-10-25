@@ -6,8 +6,28 @@ import routes from "./routes.js";
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Trust proxy headers (Cloudflare Tunnel, Fly.io, nginx, etc.)
+// This makes req.ip and req.protocol reflect the real client values
+// TRUST_PROXY can be: 'true', '1', 'loopback', 'linklocal', 'uniquelocal', or a specific IP/CIDR
+const trustProxy = process.env.TRUST_PROXY || "loopback,linklocal,uniquelocal";
+if (trustProxy === "true" || trustProxy === "1") {
+  app.set("trust proxy", true);
+} else if (trustProxy === "false" || trustProxy === "0") {
+  app.set("trust proxy", false);
+} else {
+  app.set("trust proxy", trustProxy);
+}
+
+// Get real client IP, preferring Cloudflare's CF-Connecting-IP header
+function getClientIp(req: express.Request): string {
+  const cfIp = req.headers["cf-connecting-ip"];
+  if (cfIp) return Array.isArray(cfIp) ? cfIp[0] : cfIp;
+  return req.ip || "unknown";
+}
+
 app.use((req, _res, next) => {
-  console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
+  const clientIp = getClientIp(req);
+  console.log(`${new Date().toISOString()} ${req.method} ${req.path} [${clientIp}]`);
   next();
 });
 

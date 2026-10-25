@@ -45,17 +45,150 @@ On-chain proof verification is disabled when this is not set. The app works with
 |----------|-------------|---------|
 | `FLARE_NETWORK` | Network: `coston2` or `flare` | `coston2` |
 | `PORT` | HTTP port | `3000` |
+| `HOST` | Bind address | `0.0.0.0` |
 | `NODE_ENV` | Environment | `development` |
 | `DATA_DIR` | JSON storage directory | `data` |
 | `DOMAIN` | Base URL for callbacks | `https://xrp-link.com` |
+| `TRUST_PROXY` | Trust proxy headers | `loopback,linklocal,uniquelocal` |
+
+## Self-Hosting with Docker + Cloudflare Tunnel
+
+XRPLink can be self-hosted on any server using Docker and Cloudflare Tunnel for HTTPS.
+
+### Prerequisites
+
+- Docker and Docker Compose
+- A Cloudflare account with a domain
+- Cloudflare Tunnel (cloudflared) installed
+
+### Quick Start
+
+1. **Clone and configure:**
+   ```bash
+   git clone https://github.com/joverman/xrplink.git
+   cd xrplink
+   
+   # Create .env file with your secrets
+   cat > .env << EOF
+   SESSION_SECRET=$(openssl rand -base64 32)
+   VERIFIER_API_KEY=your-fdc-api-key
+   PRIVATE_KEY_FLARE=0x...your-wallet-private-key
+   EOF
+   ```
+
+2. **Start the container:**
+   ```bash
+   docker compose up -d
+   ```
+
+3. **Configure Cloudflare Tunnel:**
+   ```bash
+   # Create tunnel (one-time)
+   cloudflared tunnel create xrplink
+   
+   # Configure tunnel to point to XRPLink
+   cat > ~/.cloudflared/config.yml << EOF
+   tunnel: xrplink
+   credentials-file: /root/.cloudflared/<tunnel-id>.json
+   
+   ingress:
+     - hostname: xrp-link.com
+       service: http://localhost:3000
+     - hostname: www.xrp-link.com
+       service: http://localhost:3000
+     - service: http_status:404
+   EOF
+   
+   # Route DNS
+   cloudflared tunnel route dns xrplink xrp-link.com
+   cloudflared tunnel route dns xrplink www.xrp-link.com
+   
+   # Run tunnel (or install as service)
+   cloudflared tunnel run xrplink
+   ```
+
+4. **Verify:**
+   ```bash
+   curl https://xrp-link.com/health
+   ```
+
+### Docker Compose Reference
+
+```yaml
+services:
+  xrplink:
+    build: .
+    container_name: xrplink
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"  # Only expose to localhost
+    volumes:
+      - xrplink_data:/app/data
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - FLARE_NETWORK=flare
+      - TRUST_PROXY=true
+      - SESSION_SECRET=${SESSION_SECRET}
+      - VERIFIER_API_KEY=${VERIFIER_API_KEY}
+      - PRIVATE_KEY_FLARE=${PRIVATE_KEY_FLARE}
+
+volumes:
+  xrplink_data:
+```
+
+### Proxy Headers
+
+The app automatically trusts proxy headers when `TRUST_PROXY=true`:
+
+- **CF-Connecting-IP**: Real client IP from Cloudflare (preferred)
+- **X-Forwarded-For**: Standard proxy header (fallback)
+- **X-Forwarded-Proto**: Protocol (http/https)
+
+Rate limiting and logging use the real client IP, not the tunnel's IP.
+
+### Persistent Data
+
+Data is stored in `/app/data` inside the container. Mount a volume to persist:
+
+```yaml
+volumes:
+  - ./data:/app/data        # Bind mount
+  # or
+  - xrplink_data:/app/data  # Named volume
+```
+
+For production, consider using PostgreSQL instead (`DATABASE_URL`).
 
 ## Fly.io Configuration
 
-The `fly.toml` has been updated with:
+The `fly.toml` is configured for scale-to-zero (currently self-hosting):
 
-- **Always-on**: `min_machines_running = 1` keeps one machine running to preserve in-memory rate limits
-- **Health checks**: HTTP health check on `/health` every 30 seconds
-- **Auto-stop disabled**: `auto_stop_machines = 'off'` prevents cold starts
+- **Scale-to-zero**: `min_machines_running = 0`, machines stop when idle
+- **Auto-start**: `auto_start_machines = true`, starts on incoming requests
+- **Health checks**: HTTP health check on `/health` (kept for easy return to Fly)
+
+To switch to always-on when customers arrive:
+```toml
+auto_stop_machines = 'off'
+min_machines_running = 1
+```
+
+### CI/CD and Fly Deployment
+
+The GitHub Actions workflow runs tests on every push/PR but **does not auto-deploy**. Fly deployment is manual only (`workflow_dispatch`) while self-hosting.
+
+To deploy to Fly manually:
+1. Go to Actions → Fly Deploy → Run workflow
+2. Or: `flyctl deploy` locally
+
+To re-enable auto-deploy on push to main, edit `.github/workflows/fly-deploy.yml`:
+```yaml
+# Change this:
+if: github.event_name == 'workflow_dispatch'
+# To this:
+if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+```
 
 ## Storage Options
 
@@ -125,73 +258,87 @@ The app now uses multiple XRPL endpoints with automatic failover:
 
 ## CI/CD
 
-The GitHub Actions workflow now:
+The GitHub Actions workflow:
 
-1. Runs `npm ci` to install dependencies
-2. Runs `npx tsc --noEmit` to typecheck
-3. Runs `npx hardhat compile` to compile contracts
-4. Runs `npm test` to execute tests
-5. Only deploys to Fly.io if all above pass
+1. **On every push/PR**: Runs typecheck, compiles contracts, runs tests
+2. **On manual dispatch only**: Deploys to Fly.io (merging does NOT auto-deploy)
 
-## Rollout Checklist
+This allows safe development while self-hosting via Docker.
 
-### Before Merging
+## Rollout Checklist (Self-Hosting)
 
-1. Create a Neon Postgres database (optional but recommended)
-2. Generate new secrets:
+### Docker Deployment
+
+1. **Set up secrets** in `.env`:
    ```bash
-   # Generate SESSION_SECRET
-   openssl rand -base64 32
-   
-   # Generate WEBHOOK_SIGNING_SECRET
-   openssl rand -base64 32
+   SESSION_SECRET=$(openssl rand -base64 32)
+   VERIFIER_API_KEY=your-fdc-api-key
+   PRIVATE_KEY_FLARE=0x...
    ```
 
-### Setting Fly Secrets (BEFORE deploying)
-
-```bash
-# Required for startup
-fly secrets set SESSION_SECRET="<your-32-char-secret>"
-fly secrets set VERIFIER_API_KEY="<your-fdc-api-key>"
-fly secrets set PRIVATE_KEY_FLARE="<your-wallet-private-key>"
-
-# Recommended
-fly secrets set DATABASE_URL="postgres://..."
-fly secrets set WEBHOOK_SIGNING_SECRET="<your-webhook-secret>"
-
-# For billing
-fly secrets set STRIPE_SECRET_KEY="sk_live_..."
-fly secrets set STRIPE_WEBHOOK_SECRET="whsec_..."
-
-# For emails
-fly secrets set RESEND_API_KEY="re_..."
-```
-
-### After Setting Secrets
-
-1. Merge the PR to `main`
-2. CI will run tests and deploy
-3. Verify the health endpoint: `curl https://xrp-link.com/health`
-4. If using Postgres, migrate existing data:
+2. **Start container**:
    ```bash
-   fly ssh console
-   cd /app
-   tsx scripts/migrate-to-postgres.ts
+   docker compose up -d
    ```
 
-### Enabling On-Chain Verification (Separate Step)
+3. **Configure Cloudflare Tunnel** to point to `http://localhost:3000`
+
+4. **Verify**:
+   ```bash
+   curl https://xrp-link.com/health
+   ```
+
+### Returning to Fly.io
+
+When customers arrive and you want to return to Fly:
+
+1. **Set Fly secrets**:
+   ```bash
+   fly secrets set SESSION_SECRET="..."
+   fly secrets set VERIFIER_API_KEY="..."
+   fly secrets set PRIVATE_KEY_FLARE="..."
+   ```
+
+2. **Update fly.toml** for always-on:
+   ```toml
+   auto_stop_machines = 'off'
+   min_machines_running = 1
+   ```
+
+3. **Re-enable auto-deploy** in `.github/workflows/fly-deploy.yml`:
+   ```yaml
+   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+   ```
+
+4. **Deploy manually** (first time):
+   ```bash
+   flyctl deploy
+   ```
+
+5. **Update DNS** from Cloudflare Tunnel to Fly.io
+
+### Enabling On-Chain Verification
 
 Once the PaymentVerifier contract is deployed on Flare mainnet:
 
 ```bash
-fly secrets set PAYMENT_VERIFIER_ADDRESS_FLARE="<deployed-contract-address>"
+# Docker
+echo "PAYMENT_VERIFIER_ADDRESS_FLARE=0x..." >> .env
+docker compose up -d
+
+# Or Fly
+fly secrets set PAYMENT_VERIFIER_ADDRESS_FLARE="0x..."
 ```
 
-Until this is set, attestations will be fetched from the FDC but not verified on-chain. The `/health` endpoint will show `paymentVerifier: "not configured"`.
+Until set, attestations are fetched but not verified on-chain. The `/health` endpoint shows `paymentVerifier: "not configured"`.
 
 ### Rollback Plan
 
-If issues occur:
-1. Revert the commit on `main`
-2. Previous deployment will be restored by Fly
-3. JSON storage will continue working (no data loss)
+**Docker**: Stop container, fix issue, restart
+```bash
+docker compose down
+# fix
+docker compose up -d
+```
+
+**Fly**: Revert commit on `main`, Fly restores previous deployment
