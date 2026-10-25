@@ -103,6 +103,54 @@ describe("Environment Validation", () => {
     assert.equal(result.valid, true);
     assert.ok(result.warnings.some(w => w.includes("SESSION_SECRET")));
   });
+
+  // Regression test for production incident: string "undefined" was written to
+  // process.env when assigning undefined, which then failed Ethereum address validation
+  it("should treat string 'undefined' as unset (regression: Fly v29 crash)", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.FLARE_NETWORK = "flare";
+    process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
+    process.env.VERIFIER_API_KEY = "valid-api-key-uuid";
+    process.env.PRIVATE_KEY_FLARE = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+    // Simulate the bug: assigning undefined to process.env creates string "undefined"
+    process.env.PAYMENT_VERIFIER_ADDRESS = "undefined";
+    process.env.PAYMENT_VERIFIER_ADDRESS_FLARE = "undefined";
+    
+    const { validateEnv } = await import("../src/env-validation.js");
+    const result = validateEnv();
+    
+    // Should be valid (warning only, not error) - app should start
+    assert.equal(result.valid, true, `Expected valid=true but got errors: ${result.errors.join(", ")}`);
+    assert.ok(result.warnings.some(w => w.includes("PAYMENT_VERIFIER_ADDRESS")),
+      `Expected warning about PAYMENT_VERIFIER_ADDRESS`);
+    assert.ok(!result.errors.some(e => e.includes("PAYMENT_VERIFIER_ADDRESS")),
+      `Should NOT error on string "undefined", got: ${result.errors.join(", ")}`);
+  });
+
+  it("should treat empty string as unset for PAYMENT_VERIFIER_ADDRESS", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.FLARE_NETWORK = "flare";
+    process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
+    process.env.VERIFIER_API_KEY = "valid-api-key-uuid";
+    process.env.PRIVATE_KEY_FLARE = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+    process.env.PAYMENT_VERIFIER_ADDRESS = "";
+    process.env.PAYMENT_VERIFIER_ADDRESS_FLARE = "";
+    
+    const { validateEnv } = await import("../src/env-validation.js");
+    const result = validateEnv();
+    
+    assert.equal(result.valid, true, `Expected valid=true but got errors: ${result.errors.join(", ")}`);
+  });
+
+  it("isEffectivelyUnset should detect undefined-like values", async () => {
+    const { isEffectivelyUnset } = await import("../src/env-validation.js");
+    
+    assert.equal(isEffectivelyUnset(undefined), true);
+    assert.equal(isEffectivelyUnset(""), true);
+    assert.equal(isEffectivelyUnset("undefined"), true);
+    assert.equal(isEffectivelyUnset("0x1234567890AbcdEF1234567890abcdef12345678"), false);
+    assert.equal(isEffectivelyUnset("some-value"), false);
+  });
 });
 
 describe("Webhook Security", () => {

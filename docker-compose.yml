@@ -1,0 +1,50 @@
+# Docker Compose example for self-hosting XRPLink
+# See docs/production-hardening.md for full setup instructions
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in secrets
+#   2. docker compose up -d
+#   3. Configure Cloudflare Tunnel to point to http://localhost:3000
+
+services:
+  xrplink:
+    build: .
+    container_name: xrplink
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - xrplink_data:/app/data
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - NODE_ENV=production
+      - FLARE_NETWORK=flare
+      - DATA_DIR=/app/data
+      # Trust proxy headers from Cloudflare Tunnel
+      - TRUST_PROXY=true
+      # Required secrets (set via .env file or uncomment and fill in)
+      - SESSION_SECRET=${SESSION_SECRET}
+      - VERIFIER_API_KEY=${VERIFIER_API_KEY}
+      - PRIVATE_KEY_FLARE=${PRIVATE_KEY_FLARE}
+      # Optional: On-chain verification (set when contract is deployed)
+      # - PAYMENT_VERIFIER_ADDRESS_FLARE=${PAYMENT_VERIFIER_ADDRESS_FLARE}
+      # Optional: Postgres (otherwise uses JSON file storage)
+      # - DATABASE_URL=${DATABASE_URL}
+      # Optional: Webhook signing
+      # - WEBHOOK_SIGNING_SECRET=${WEBHOOK_SIGNING_SECRET}
+      # Optional: Stripe billing
+      # - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      # - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      # Optional: Email via Resend
+      # - RESEND_API_KEY=${RESEND_API_KEY}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  xrplink_data:
+    driver: local

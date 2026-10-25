@@ -18,11 +18,17 @@ primary_region = 'lhr'
 [http_service]
   internal_port = 3000
   force_https = true
-  auto_stop_machines = 'off'
+  # Scale-to-zero: machines stop when idle, start on demand.
+  # Currently self-hosting via Docker + Cloudflare Tunnel — Fly machines are stopped.
+  # To return to always-on when customers arrive:
+  #   auto_stop_machines = 'off'
+  #   min_machines_running = 1
+  auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
   processes = ['app']
 
+# Health check kept for easy return to Fly deployment
 [checks]
   [checks.health]
     grace_period = "10s"
