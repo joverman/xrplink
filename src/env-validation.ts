@@ -10,7 +10,10 @@ export interface EnvValidationResult {
 }
 
 const DEV_SESSION_SECRET = "dev-secret-change-in-prod";
-const DEV_VERIFIER_API_KEY = "00000000-0000-0000-0000-000000000000";
+
+// Note: The all-zeros UUID is Flare's documented public API key for its hosted verifiers.
+// It's valid for production use, though a dedicated key may have higher rate limits.
+const PUBLIC_VERIFIER_API_KEY = "00000000-0000-0000-0000-000000000000";
 
 function isValidEthereumAddress(address: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(address);
@@ -55,27 +58,30 @@ export function validateEnv(): EnvValidationResult {
   }
 
   // VERIFIER_API_KEY - FDC verifier API key
+  // The all-zeros UUID is Flare's public API key and is valid for production.
+  // A dedicated key may offer higher rate limits.
   const verifierApiKey = process.env.VERIFIER_API_KEY;
-  if (!verifierApiKey || verifierApiKey === DEV_VERIFIER_API_KEY) {
+  if (!verifierApiKey || verifierApiKey === PUBLIC_VERIFIER_API_KEY) {
     if (isProd) {
-      errors.push(
-        "VERIFIER_API_KEY is not set or uses placeholder default. " +
-          "Obtain a valid API key from the Flare Data Connector."
+      warnings.push(
+        "VERIFIER_API_KEY is not set or uses Flare's public API key. " +
+          "This works but a dedicated key may have higher rate limits."
       );
     } else {
-      warnings.push("VERIFIER_API_KEY using placeholder (OK for local dev without FDC).");
+      warnings.push("VERIFIER_API_KEY using public key (OK for local dev).");
     }
   }
 
-  // PRIVATE_KEY - required for signing blockchain transactions
+  // PRIVATE_KEY - required for submitting attestation requests to blockchain
+  // Without this, receipt lookup still works but new attestations cannot be created.
   const network = process.env.FLARE_NETWORK || "coston2";
   const privateKeyEnv = network === "flare" ? "PRIVATE_KEY_FLARE" : "PRIVATE_KEY_COSTON2";
   const privateKey = process.env[privateKeyEnv] || process.env.PRIVATE_KEY;
   if (!privateKey) {
     if (isProd) {
-      errors.push(
+      warnings.push(
         `${privateKeyEnv} (or PRIVATE_KEY) is not set. ` +
-          "Required for submitting attestation requests to the blockchain."
+          "Receipt lookup works but new attestation requests cannot be submitted."
       );
     } else {
       warnings.push(`${privateKeyEnv} not set (blockchain features disabled).`);
@@ -161,10 +167,10 @@ export function printValidationResult(result: EnvValidationResult): void {
     }
     console.error("\nRequired environment variables for production:");
     console.error("  SESSION_SECRET         - Secure random string for JWT signing");
-    console.error("  VERIFIER_API_KEY       - Flare Data Connector API key");
-    console.error("  PRIVATE_KEY_FLARE      - Wallet private key (for flare network)");
-    console.error("\nOptional (on-chain verification disabled without):");
-    console.error("  PAYMENT_VERIFIER_ADDRESS_FLARE - Deployed PaymentVerifier contract address");
+    console.error("\nOptional (receipt lookup works without these):");
+    console.error("  VERIFIER_API_KEY       - Flare Data Connector API key (public key works)");
+    console.error("  PRIVATE_KEY_FLARE      - Wallet private key (for new attestations)");
+    console.error("  PAYMENT_VERIFIER_ADDRESS_FLARE - PaymentVerifier contract (for on-chain verification)");
     console.error("\nOptional but recommended:");
     console.error("  STRIPE_SECRET_KEY      - Stripe API key for billing");
     console.error("  STRIPE_WEBHOOK_SECRET  - Stripe webhook signing secret");

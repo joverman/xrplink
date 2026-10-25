@@ -58,13 +58,16 @@ jobs:
 
       - name: Boot container with production config
         run: |
+          # Use minimal production config to catch regressions:
+          # - All-zeros VERIFIER_API_KEY is Flare's public key (valid for prod)
+          # - No PRIVATE_KEY_FLARE (receipt lookup works without it)
+          # - No PAYMENT_VERIFIER_ADDRESS_FLARE (on-chain verification is optional)
           docker run -d --name xrplink-ci \
             -p 3000:3000 \
             -e NODE_ENV=production \
             -e FLARE_NETWORK=flare \
             -e SESSION_SECRET="ci-docker-test-secret-32-chars!!" \
-            -e VERIFIER_API_KEY="ci-docker-test-verifier-key-uuid" \
-            -e PRIVATE_KEY_FLARE="0x0000000000000000000000000000000000000000000000000000000000000001" \
+            -e VERIFIER_API_KEY="00000000-0000-0000-0000-000000000000" \
             xrplink:ci
 
       - name: Wait for container to be healthy

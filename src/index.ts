@@ -6,11 +6,6 @@ import { startMcpServer } from "./mcp/index.js";
 // Validate environment before starting
 requireValidEnv();
 
-if (!config.privateKey && isProduction()) {
-  console.error("PRIVATE_KEY not set");
-  process.exit(1);
-}
-
 // Always start MCP server (stdio)
 startMcpServer().catch((err) => {
   console.error("MCP server error:", err);
