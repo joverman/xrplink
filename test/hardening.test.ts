@@ -243,3 +243,125 @@ describe("Health Check", () => {
     assert.ok(health.type === "json" || health.type === "postgres");
   });
 });
+
+describe("User Store", () => {
+  it("should support subscription status fields", async () => {
+    const { userStore } = await import("../src/user-store.js");
+    const { hash } = await import("bcryptjs");
+    
+    const email = `test-${Date.now()}@example.com`;
+    const passwordHash = await hash("password", 10);
+    const user = userStore.create(email, passwordHash);
+    
+    assert.equal(user.tier, "free");
+    assert.equal(user.subscriptionStatus, "none");
+    assert.equal(user.stripeSubscriptionId, "");
+    
+    userStore.update(user.id, {
+      tier: "paid",
+      subscriptionStatus: "active",
+      stripeCustomerId: "cus_test123",
+      stripeSubscriptionId: "sub_test123",
+    });
+    
+    const updated = userStore.findById(user.id);
+    assert.ok(updated);
+    assert.equal(updated.tier, "paid");
+    assert.equal(updated.subscriptionStatus, "active");
+    assert.equal(updated.stripeCustomerId, "cus_test123");
+    assert.equal(updated.stripeSubscriptionId, "sub_test123");
+    
+    // Test findByStripeCustomerId
+    const found = userStore.findByStripeCustomerId("cus_test123");
+    assert.ok(found);
+    assert.equal(found.id, user.id);
+    
+    // Cleanup
+    userStore.delete(user.id);
+  });
+
+  it("should downgrade user on subscription deletion", async () => {
+    const { userStore } = await import("../src/user-store.js");
+    const { hash } = await import("bcryptjs");
+    
+    const email = `test-downgrade-${Date.now()}@example.com`;
+    const passwordHash = await hash("password", 10);
+    const user = userStore.create(email, passwordHash);
+    
+    // Simulate active subscription
+    userStore.update(user.id, {
+      tier: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: "cus_downgrade_test",
+      stripeSubscriptionId: "sub_downgrade_test",
+    });
+    
+    // Simulate cancellation
+    userStore.update(user.id, {
+      tier: "free",
+      subscriptionStatus: "canceled",
+      stripeSubscriptionId: "",
+    });
+    
+    const downgraded = userStore.findById(user.id);
+    assert.ok(downgraded);
+    assert.equal(downgraded.tier, "free");
+    assert.equal(downgraded.subscriptionStatus, "canceled");
+    
+    // Cleanup
+    userStore.delete(user.id);
+  });
+
+  it("should handle past_due status", async () => {
+    const { userStore } = await import("../src/user-store.js");
+    const { hash } = await import("bcryptjs");
+    
+    const email = `test-pastdue-${Date.now()}@example.com`;
+    const passwordHash = await hash("password", 10);
+    const user = userStore.create(email, passwordHash);
+    
+    userStore.update(user.id, {
+      tier: "paid",
+      subscriptionStatus: "active",
+      stripeCustomerId: "cus_pastdue_test",
+    });
+    
+    // Simulate payment failure
+    userStore.update(user.id, { subscriptionStatus: "past_due" });
+    
+    let updated = userStore.findById(user.id);
+    assert.ok(updated);
+    assert.equal(updated.tier, "paid"); // Tier preserved during grace period
+    assert.equal(updated.subscriptionStatus, "past_due");
+    
+    // Simulate successful payment
+    userStore.update(user.id, { subscriptionStatus: "active" });
+    
+    updated = userStore.findById(user.id);
+    assert.ok(updated);
+    assert.equal(updated.subscriptionStatus, "active");
+    
+    // Cleanup
+    userStore.delete(user.id);
+  });
+});
+
+describe("Billing Configuration", () => {
+  it("should export TIER_PRODUCTS with correct lookup keys", async () => {
+    const { TIER_PRODUCTS } = await import("../src/billing.js");
+    
+    assert.ok(TIER_PRODUCTS.paid);
+    assert.ok(TIER_PRODUCTS.pro);
+    assert.equal(TIER_PRODUCTS.paid.lookupKey, "xrplink_paid");
+    assert.equal(TIER_PRODUCTS.pro.lookupKey, "xrplink_pro");
+    assert.equal(TIER_PRODUCTS.paid.unitAmount, 2900);
+    assert.equal(TIER_PRODUCTS.pro.unitAmount, 9900);
+  });
+
+  it("should report automatic tax setting", async () => {
+    const { isAutomaticTaxEnabled } = await import("../src/billing.js");
+    
+    // Default is false
+    assert.equal(isAutomaticTaxEnabled(), false);
+  });
+});
