@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
+import { dirname, join } from "path";
 import { v4 as uuid } from "uuid";
 import { Tier } from "./types.js";
 
@@ -46,7 +47,18 @@ class UserStore {
   }
 
   private persist() {
-    writeFileSync(USERS_PATH, JSON.stringify(this.data.users, null, 2));
+    const dir = dirname(USERS_PATH);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    const tempPath = join(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+    try {
+      writeFileSync(tempPath, JSON.stringify(this.data.users, null, 2));
+      renameSync(tempPath, USERS_PATH);
+    } catch (err) {
+      try { unlinkSync(tempPath); } catch {}
+      throw err;
+    }
   }
 
   findByEmail(email: string): StoredUser | undefined {

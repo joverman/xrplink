@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "XRPLink - XRP Payment attestation on Flare FDC",
   "scripts": {
-    "test": "npx hardhat test",
+    "test": "npx hardhat test && node --import tsx --test test/hardening.test.ts",
+    "test:contracts": "npx hardhat test",
+    "test:app": "node --import tsx --test test/hardening.test.ts",
+    "typecheck": "tsc --noEmit",
     "compile": "npx hardhat compile",
     "faucet": "tsx scripts/faucet.ts",
     "wallet": "tsx scripts/generate-wallet.ts",
@@ -14,7 +17,8 @@
     "start:mcp": "tsx src/mcp-server.ts",
     "start:rest": "START_API=true tsx src/index.ts",
     "deploy": "tsx scripts/deploy-verifier.ts",
-    "attest": "tsx scripts/attest-mainnet.ts"
+    "attest": "tsx scripts/attest-mainnet.ts",
+    "migrate:postgres": "tsx scripts/migrate-to-postgres.ts"
   },
   "main": "index.js",
   "keywords": [
@@ -38,8 +42,11 @@
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
+    "@types/bcryptjs": "^3.0.0",
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^26.1.1",
+    "@types/pg": "^8.11.10",
     "@types/uuid": "^10.0.0",
     "hardhat": "^3.9.1",
     "typescript": "^6.0.3",
@@ -53,6 +60,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
+    "pg": "^8.13.1",
     "resend": "^6.17.2",
     "stripe": "^22.3.2",
     "tsx": "^4.23.1",

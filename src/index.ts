@@ -1,9 +1,13 @@
 import "dotenv/config";
+import { requireValidEnv, isProduction } from "./env-validation.js";
 import { config } from "./config.js";
 import { startMcpServer } from "./mcp/index.js";
 
-if (!config.privateKey) {
-  console.error("PRIVATE_KEY not set in .env");
+// Validate environment before starting
+requireValidEnv();
+
+if (!config.privateKey && isProduction()) {
+  console.error("PRIVATE_KEY not set");
   process.exit(1);
 }
 

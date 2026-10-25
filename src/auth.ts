@@ -15,7 +15,7 @@ export interface AuthResult {
   error?: string;
 }
 
-export function signup(email: string, password: string): AuthResult {
+export async function signup(email: string, password: string): Promise<AuthResult> {
   if (!email || !password) return { ok: false, error: "Email and password required" };
   if (password.length < 8) return { ok: false, error: "Password must be at least 8 characters" };
 
@@ -25,13 +25,11 @@ export function signup(email: string, password: string): AuthResult {
   const passwordHash = bcrypt.hashSync(password, SALT_ROUNDS);
   const user = userStore.create(email, passwordHash);
 
-  // Auto-create a free-tier API key
-  const apiKey = store.createApiKey(`User: ${email}`, "free");
+  const apiKey = await store.createApiKey(`User: ${email}`, "free");
   userStore.update(user.id, { apiKeyIds: [apiKey.key] });
 
   const token = jwt.sign({ userId: user.id, email: user.email }, SESSION_SECRET, { expiresIn: "7d" });
 
-  // Fire and forget welcome email
   sendWelcomeEmail(email, apiKey.key).catch(() => {});
 
   return { ok: true, user, token, apiKey: apiKey.key };

@@ -1,0 +1,186 @@
+/**
+ * Environment validation for production deployments.
+ * Validates that required secrets are set and not using development defaults.
+ */
+
+export interface EnvValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+const DEV_SESSION_SECRET = "dev-secret-change-in-prod";
+const DEV_VERIFIER_API_KEY = "00000000-0000-0000-0000-000000000000";
+
+function isValidEthereumAddress(address: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(address);
+}
+
+export function isProduction(): boolean {
+  return (
+    process.env.NODE_ENV === "production" ||
+    !!process.env.FLY_APP_NAME ||
+    !!process.env.FLY_REGION
+  );
+}
+
+export function validateEnv(): EnvValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const isProd = isProduction();
+
+  // --- Required in production ---
+
+  // SESSION_SECRET - used for JWT signing
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret || sessionSecret === DEV_SESSION_SECRET) {
+    if (isProd) {
+      errors.push(
+        "SESSION_SECRET is not set or uses development default. " +
+          "Set a secure random string (e.g., `openssl rand -base64 32`)."
+      );
+    } else {
+      warnings.push("SESSION_SECRET using development default (OK for local dev).");
+    }
+  }
+
+  // VERIFIER_API_KEY - FDC verifier API key
+  const verifierApiKey = process.env.VERIFIER_API_KEY;
+  if (!verifierApiKey || verifierApiKey === DEV_VERIFIER_API_KEY) {
+    if (isProd) {
+      errors.push(
+        "VERIFIER_API_KEY is not set or uses placeholder default. " +
+          "Obtain a valid API key from the Flare Data Connector."
+      );
+    } else {
+      warnings.push("VERIFIER_API_KEY using placeholder (OK for local dev without FDC).");
+    }
+  }
+
+  // PRIVATE_KEY - required for signing blockchain transactions
+  const network = process.env.FLARE_NETWORK || "coston2";
+  const privateKeyEnv = network === "flare" ? "PRIVATE_KEY_FLARE" : "PRIVATE_KEY_COSTON2";
+  const privateKey = process.env[privateKeyEnv] || process.env.PRIVATE_KEY;
+  if (!privateKey) {
+    if (isProd) {
+      errors.push(
+        `${privateKeyEnv} (or PRIVATE_KEY) is not set. ` +
+          "Required for submitting attestation requests to the blockchain."
+      );
+    } else {
+      warnings.push(`${privateKeyEnv} not set (blockchain features disabled).`);
+    }
+  }
+
+  // PAYMENT_VERIFIER_ADDRESS - deployed contract address (optional)
+  // On-chain verification is disabled when not set, but the app still works
+  const verifierAddressEnv =
+    network === "flare" ? "PAYMENT_VERIFIER_ADDRESS_FLARE" : "PAYMENT_VERIFIER_ADDRESS_COSTON2";
+  const verifierAddress = process.env[verifierAddressEnv] || process.env.PAYMENT_VERIFIER_ADDRESS;
+  if (!verifierAddress) {
+    warnings.push(
+      `${verifierAddressEnv} not set. On-chain proof verification is disabled. ` +
+        "Deploy the PaymentVerifier contract and set this address to enable verification."
+    );
+  } else if (!isValidEthereumAddress(verifierAddress)) {
+    errors.push(
+      `${verifierAddressEnv} is not a valid Ethereum address. ` +
+        "Expected format: 0x followed by 40 hex characters (e.g., 0x1234...abcd)."
+    );
+  }
+
+  // --- Optional but recommended in production ---
+
+  // STRIPE_SECRET_KEY - for billing
+  if (!process.env.STRIPE_SECRET_KEY) {
+    warnings.push("STRIPE_SECRET_KEY not set (billing features disabled).");
+  }
+
+  // STRIPE_WEBHOOK_SECRET - for secure Stripe webhook handling
+  if (process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_WEBHOOK_SECRET) {
+    if (isProd) {
+      errors.push(
+        "STRIPE_WEBHOOK_SECRET is not set but STRIPE_SECRET_KEY is. " +
+          "Webhook signature verification will fail."
+      );
+    }
+  }
+
+  // RESEND_API_KEY - for email delivery
+  if (!process.env.RESEND_API_KEY) {
+    warnings.push("RESEND_API_KEY not set (email features disabled).");
+  }
+
+  // WEBHOOK_SIGNING_SECRET - for signing outbound webhooks
+  if (!process.env.WEBHOOK_SIGNING_SECRET) {
+    if (isProd) {
+      warnings.push(
+        "WEBHOOK_SIGNING_SECRET not set. Outbound webhooks will not be signed. " +
+          "Consider setting a secure random string for webhook payload signing."
+      );
+    }
+  }
+
+  // DATABASE_URL - for Postgres storage
+  if (!process.env.DATABASE_URL) {
+    warnings.push(
+      "DATABASE_URL not set. Using JSON file storage. " +
+        "Consider using Postgres for production reliability."
+    );
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
+export function printValidationResult(result: EnvValidationResult): void {
+  if (result.warnings.length > 0) {
+    console.log("\n⚠️  Environment warnings:");
+    for (const warning of result.warnings) {
+      console.log(`   - ${warning}`);
+    }
+  }
+
+  if (result.errors.length > 0) {
+    console.error("\n❌ Environment validation failed:");
+    for (const error of result.errors) {
+      console.error(`   - ${error}`);
+    }
+    console.error("\nRequired environment variables for production:");
+    console.error("  SESSION_SECRET         - Secure random string for JWT signing");
+    console.error("  VERIFIER_API_KEY       - Flare Data Connector API key");
+    console.error("  PRIVATE_KEY_FLARE      - Wallet private key (for flare network)");
+    console.error("\nOptional (on-chain verification disabled without):");
+    console.error("  PAYMENT_VERIFIER_ADDRESS_FLARE - Deployed PaymentVerifier contract address");
+    console.error("\nOptional but recommended:");
+    console.error("  STRIPE_SECRET_KEY      - Stripe API key for billing");
+    console.error("  STRIPE_WEBHOOK_SECRET  - Stripe webhook signing secret");
+    console.error("  RESEND_API_KEY         - Resend API key for emails");
+    console.error("  WEBHOOK_SIGNING_SECRET - Secret for signing outbound webhooks");
+    console.error("  DATABASE_URL           - Postgres connection string (Neon recommended)");
+    console.error("");
+  }
+}
+
+/**
+ * Validate environment and exit if invalid in production.
+ * Call this early in the startup sequence.
+ */
+export function requireValidEnv(): void {
+  const result = validateEnv();
+  printValidationResult(result);
+
+  if (!result.valid && isProduction()) {
+    console.error("Refusing to start in production with invalid environment.\n");
+    process.exit(1);
+  }
+
+  if (result.valid && result.warnings.length === 0) {
+    console.log("✅ Environment validation passed.\n");
+  } else if (result.valid) {
+    console.log("✅ Environment validation passed (with warnings).\n");
+  }
+}

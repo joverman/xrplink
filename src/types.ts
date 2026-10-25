@@ -64,6 +64,7 @@ export interface Webhook {
   id: string;
   url: string;
   attestationId: string | null;
+  secret?: string;
   createdAt: string;
 }
 

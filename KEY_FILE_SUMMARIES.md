@@ -70,7 +70,7 @@
 - `client.fundWallet()` creates + funds a test wallet from the XRP testnet faucet
 - Sends 1 XRP payment with:
   - MemoData: `"XRPLinkTest"` (hex-encoded, padded)
-  - MemoType: `"https://xrplink.io"` (hex-encoded)
+  - MemoType: `"https://xrp-link.com"` (hex-encoded)
 - Saves transaction hash to .env
 
 **Status:** ✅ Works (tx `388076B7245A60A13D6A764C8D0B5919F8A77E04E720C32CA1E30E9B7A291F22`)

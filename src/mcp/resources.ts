@@ -54,6 +54,8 @@ const templates: ResourceTemplate[] = [
         }
         blockNumber = (await provider.getBlockNumber()).toString();
       } catch {}
+      const attestations = await store.listAttestations();
+      const apiKeys = await store.listApiKeys();
       return [
         "# Network Status",
         "",
@@ -63,8 +65,8 @@ const templates: ResourceTemplate[] = [
         `| Network | ${config.network} |`,
         `| Block | ${blockNumber} |`,
         `| Wallet Balance | ${balance} FLR |`,
-        `| Attestations | ${store.listAttestations().length} |`,
-        `| API Keys | ${store.listApiKeys().length} |`,
+        `| Attestations | ${attestations.length} |`,
+        `| API Keys | ${apiKeys.length} |`,
         `| Brand | ${whiteLabel.get().brandName} |`,
         `| Uptime | ${Math.floor(process.uptime())}s |`,
       ].join("\n");

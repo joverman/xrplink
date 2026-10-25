@@ -1,11 +1,13 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
+import { join, dirname } from "path";
+import { tmpdir } from "os";
 import { v4 as uuid } from "uuid";
 import { Attestation, AttestationStatus, ApiKey, Tier, Webhook } from "./types.js";
 
-const DATA_DIR = "data";
-const ATTESTATIONS_PATH = `${DATA_DIR}/attestations.json`;
-const API_KEYS_PATH = `${DATA_DIR}/api-keys.json`;
-const WEBHOOKS_PATH = `${DATA_DIR}/webhooks.json`;
+const DATA_DIR = process.env.DATA_DIR || "data";
+const ATTESTATIONS_PATH = join(DATA_DIR, "attestations.json");
+const API_KEYS_PATH = join(DATA_DIR, "api-keys.json");
+const WEBHOOKS_PATH = join(DATA_DIR, "webhooks.json");
 
 interface PersistedData {
   attestations: Record<string, Attestation>;
@@ -14,8 +16,51 @@ interface PersistedData {
   webhooks: Record<string, Webhook>;
 }
 
-class JsonFileStore {
+interface StoreHealth {
+  ok: boolean;
+  type: "json" | "postgres";
+  error?: string;
+}
+
+interface Store {
+  createAttestation(txHash: string): Promise<Attestation>;
+  getAttestation(id: string): Promise<Attestation | undefined>;
+  getByTxHash(txHash: string): Promise<Attestation | undefined>;
+  updateAttestation(id: string, updates: Partial<Attestation>): Promise<Attestation | undefined>;
+  listAttestations(): Promise<Attestation[]>;
+  createApiKey(name: string, tier?: Tier): Promise<ApiKey>;
+  getApiKey(key: string): Promise<ApiKey | undefined>;
+  listApiKeys(): Promise<ApiKey[]>;
+  deleteApiKey(key: string): Promise<boolean>;
+  incrementApiKeyUsage(key: string): Promise<void>;
+  updateApiKeyTier(key: string, tier: Tier): Promise<boolean>;
+  registerWebhook(url: string, attestationId: string | null, secret?: string): Promise<Webhook>;
+  getWebhooksForAttestation(attestationId: string): Promise<Webhook[]>;
+  getWebhook(id: string): Promise<Webhook | undefined>;
+  removeWebhook(id: string): Promise<boolean>;
+  getHealth(): StoreHealth;
+}
+
+function atomicWriteFileSync(path: string, data: string): void {
+  const dir = dirname(path);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  const tempPath = join(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+  try {
+    writeFileSync(tempPath, data);
+    renameSync(tempPath, path);
+  } catch (err) {
+    try {
+      unlinkSync(tempPath);
+    } catch {}
+    throw err;
+  }
+}
+
+class JsonFileStore implements Store {
   private data: PersistedData;
+  private lastError?: string;
 
   constructor() {
     this.data = this.load();
@@ -25,17 +70,20 @@ class JsonFileStore {
     if (!existsSync(DATA_DIR)) {
       mkdirSync(DATA_DIR, { recursive: true });
     }
-    const empty = { attestations: {}, txHashIndex: {}, apiKeys: {}, webhooks: {} };
+    const empty: PersistedData = { attestations: {}, txHashIndex: {}, apiKeys: {}, webhooks: {} };
     try {
-      const attestations = this.readJson(ATTESTATIONS_PATH) || {};
+      const attestationsRaw = this.readJson(ATTESTATIONS_PATH) || {};
+      const attestations = attestationsRaw as Record<string, Attestation>;
       const txHashIndex: Record<string, string> = {};
       for (const [id, a] of Object.entries(attestations)) {
-        txHashIndex[(a as Attestation).txHash.toLowerCase()] = id;
+        txHashIndex[a.txHash.toLowerCase()] = id;
       }
-      const apiKeys = this.readJson(API_KEYS_PATH) || {};
-      const webhooks = this.readJson(WEBHOOKS_PATH) || {};
+      const apiKeys = (this.readJson(API_KEYS_PATH) || {}) as Record<string, ApiKey>;
+      const webhooks = (this.readJson(WEBHOOKS_PATH) || {}) as Record<string, Webhook>;
+      this.lastError = undefined;
       return { attestations, txHashIndex, apiKeys, webhooks };
-    } catch {
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : String(err);
       return empty;
     }
   }
@@ -46,14 +94,26 @@ class JsonFileStore {
   }
 
   private syncPersist() {
-    writeFileSync(ATTESTATIONS_PATH, JSON.stringify(this.data.attestations, null, 2));
-    writeFileSync(API_KEYS_PATH, JSON.stringify(this.data.apiKeys, null, 2));
-    writeFileSync(WEBHOOKS_PATH, JSON.stringify(this.data.webhooks, null, 2));
+    try {
+      atomicWriteFileSync(ATTESTATIONS_PATH, JSON.stringify(this.data.attestations, null, 2));
+      atomicWriteFileSync(API_KEYS_PATH, JSON.stringify(this.data.apiKeys, null, 2));
+      atomicWriteFileSync(WEBHOOKS_PATH, JSON.stringify(this.data.webhooks, null, 2));
+      this.lastError = undefined;
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : String(err);
+      throw err;
+    }
   }
 
-  // --- Attestations ---
+  getHealth(): StoreHealth {
+    return {
+      ok: !this.lastError,
+      type: "json",
+      error: this.lastError,
+    };
+  }
 
-  createAttestation(txHash: string): Attestation {
+  async createAttestation(txHash: string): Promise<Attestation> {
     const existing = this.data.txHashIndex[txHash.toLowerCase()];
     if (existing) return this.data.attestations[existing];
 
@@ -70,17 +130,17 @@ class JsonFileStore {
     return record;
   }
 
-  getAttestation(id: string): Attestation | undefined {
+  async getAttestation(id: string): Promise<Attestation | undefined> {
     return this.data.attestations[id];
   }
 
-  getByTxHash(txHash: string): Attestation | undefined {
+  async getByTxHash(txHash: string): Promise<Attestation | undefined> {
     const id = this.data.txHashIndex[txHash.toLowerCase()];
     if (!id) return undefined;
     return this.data.attestations[id];
   }
 
-  updateAttestation(id: string, updates: Partial<Attestation>): Attestation | undefined {
+  async updateAttestation(id: string, updates: Partial<Attestation>): Promise<Attestation | undefined> {
     const record = this.data.attestations[id];
     if (!record) return undefined;
     const updated = { ...record, ...updates, updatedAt: new Date().toISOString() };
@@ -89,15 +149,13 @@ class JsonFileStore {
     return updated;
   }
 
-  listAttestations(): Attestation[] {
+  async listAttestations(): Promise<Attestation[]> {
     return Object.values(this.data.attestations).sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
   }
 
-  // --- API Keys ---
-
-  createApiKey(name: string, tier: Tier = "free"): ApiKey {
+  async createApiKey(name: string, tier: Tier = "free"): Promise<ApiKey> {
     const key = "sk_live_" + uuid().replace(/-/g, "") + uuid().replace(/-/g, "");
     const record: ApiKey = { key, name, tier, active: true, usageCount: 0, createdAt: new Date().toISOString() };
     this.data.apiKeys[key] = record;
@@ -105,22 +163,22 @@ class JsonFileStore {
     return record;
   }
 
-  getApiKey(key: string): ApiKey | undefined {
+  async getApiKey(key: string): Promise<ApiKey | undefined> {
     return this.data.apiKeys[key];
   }
 
-  listApiKeys(): ApiKey[] {
+  async listApiKeys(): Promise<ApiKey[]> {
     return Object.values(this.data.apiKeys);
   }
 
-  deleteApiKey(key: string): boolean {
+  async deleteApiKey(key: string): Promise<boolean> {
     const exists = !!this.data.apiKeys[key];
     delete this.data.apiKeys[key];
     if (exists) this.syncPersist();
     return exists;
   }
 
-  incrementApiKeyUsage(key: string) {
+  async incrementApiKeyUsage(key: string): Promise<void> {
     const record = this.data.apiKeys[key];
     if (record) {
       record.usageCount++;
@@ -128,7 +186,7 @@ class JsonFileStore {
     }
   }
 
-  updateApiKeyTier(key: string, tier: Tier): boolean {
+  async updateApiKeyTier(key: string, tier: Tier): Promise<boolean> {
     const record = this.data.apiKeys[key];
     if (!record) return false;
     record.tier = tier;
@@ -136,28 +194,303 @@ class JsonFileStore {
     return true;
   }
 
-  // --- Webhooks ---
-
-  registerWebhook(url: string, attestationId: string | null): Webhook {
+  async registerWebhook(url: string, attestationId: string | null, secret?: string): Promise<Webhook> {
     const id = uuid();
-    const hook: Webhook = { id, url, attestationId, createdAt: new Date().toISOString() };
+    const hook: Webhook = { id, url, attestationId, secret, createdAt: new Date().toISOString() };
     this.data.webhooks[id] = hook;
     this.syncPersist();
     return hook;
   }
 
-  getWebhooksForAttestation(attestationId: string): Webhook[] {
+  async getWebhooksForAttestation(attestationId: string): Promise<Webhook[]> {
     return Object.values(this.data.webhooks).filter(
       (h) => h.attestationId === null || h.attestationId === attestationId
     );
   }
 
-  removeWebhook(id: string): boolean {
+  async getWebhook(id: string): Promise<Webhook | undefined> {
+    return this.data.webhooks[id];
+  }
+
+  async removeWebhook(id: string): Promise<boolean> {
     const exists = !!this.data.webhooks[id];
     delete this.data.webhooks[id];
     if (exists) this.syncPersist();
     return exists;
   }
+
+  getData(): PersistedData {
+    return this.data;
+  }
 }
 
-export const store = new JsonFileStore();
+class PostgresStore implements Store {
+  private pool: any;
+  private initialized = false;
+  private lastError?: string;
+
+  constructor(connectionString: string) {
+    this.initPool(connectionString);
+  }
+
+  private async initPool(connectionString: string) {
+    try {
+      const pg = await import("pg");
+      this.pool = new pg.default.Pool({ connectionString, ssl: { rejectUnauthorized: false } });
+      await this.ensureTables();
+      this.initialized = true;
+      this.lastError = undefined;
+      console.log("PostgreSQL connection established");
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : String(err);
+      console.error("PostgreSQL connection failed:", this.lastError);
+      throw err;
+    }
+  }
+
+  private async ensureTables() {
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS attestations (
+        id UUID PRIMARY KEY,
+        tx_hash VARCHAR(64) NOT NULL UNIQUE,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        round_id INTEGER,
+        abi_encoded_request TEXT,
+        proof JSONB,
+        verified_tx_hash VARCHAR(66),
+        error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_attestations_tx_hash ON attestations(tx_hash);
+      CREATE INDEX IF NOT EXISTS idx_attestations_status ON attestations(status);
+    `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS api_keys (
+        key VARCHAR(100) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        tier VARCHAR(20) NOT NULL DEFAULT 'free',
+        active BOOLEAN NOT NULL DEFAULT true,
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS webhooks (
+        id UUID PRIMARY KEY,
+        url TEXT NOT NULL,
+        attestation_id UUID,
+        secret VARCHAR(255),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_webhooks_attestation ON webhooks(attestation_id);
+    `);
+  }
+
+  getHealth(): StoreHealth {
+    return {
+      ok: this.initialized && !this.lastError,
+      type: "postgres",
+      error: this.lastError,
+    };
+  }
+
+  private rowToAttestation(row: any): Attestation {
+    return {
+      id: row.id,
+      txHash: row.tx_hash,
+      status: row.status as AttestationStatus,
+      roundId: row.round_id,
+      abiEncodedRequest: row.abi_encoded_request,
+      proof: row.proof,
+      verifiedTxHash: row.verified_tx_hash,
+      error: row.error,
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString(),
+    };
+  }
+
+  async createAttestation(txHash: string): Promise<Attestation> {
+    const existing = await this.getByTxHash(txHash);
+    if (existing) return existing;
+
+    const id = uuid();
+    const result = await this.pool.query(
+      `INSERT INTO attestations (id, tx_hash) VALUES ($1, $2) RETURNING *`,
+      [id, txHash]
+    );
+    return this.rowToAttestation(result.rows[0]);
+  }
+
+  async getAttestation(id: string): Promise<Attestation | undefined> {
+    const result = await this.pool.query(`SELECT * FROM attestations WHERE id = $1`, [id]);
+    return result.rows[0] ? this.rowToAttestation(result.rows[0]) : undefined;
+  }
+
+  async getByTxHash(txHash: string): Promise<Attestation | undefined> {
+    const result = await this.pool.query(
+      `SELECT * FROM attestations WHERE LOWER(tx_hash) = LOWER($1)`,
+      [txHash]
+    );
+    return result.rows[0] ? this.rowToAttestation(result.rows[0]) : undefined;
+  }
+
+  async updateAttestation(id: string, updates: Partial<Attestation>): Promise<Attestation | undefined> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+
+    if (updates.status !== undefined) { fields.push(`status = $${idx++}`); values.push(updates.status); }
+    if (updates.roundId !== undefined) { fields.push(`round_id = $${idx++}`); values.push(updates.roundId); }
+    if (updates.abiEncodedRequest !== undefined) { fields.push(`abi_encoded_request = $${idx++}`); values.push(updates.abiEncodedRequest); }
+    if (updates.proof !== undefined) { fields.push(`proof = $${idx++}`); values.push(JSON.stringify(updates.proof)); }
+    if (updates.verifiedTxHash !== undefined) { fields.push(`verified_tx_hash = $${idx++}`); values.push(updates.verifiedTxHash); }
+    if (updates.error !== undefined) { fields.push(`error = $${idx++}`); values.push(updates.error); }
+
+    if (fields.length === 0) return this.getAttestation(id);
+
+    fields.push(`updated_at = NOW()`);
+    values.push(id);
+
+    const result = await this.pool.query(
+      `UPDATE attestations SET ${fields.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return result.rows[0] ? this.rowToAttestation(result.rows[0]) : undefined;
+  }
+
+  async listAttestations(): Promise<Attestation[]> {
+    const result = await this.pool.query(`SELECT * FROM attestations ORDER BY created_at DESC`);
+    return result.rows.map((r: any) => this.rowToAttestation(r));
+  }
+
+  async createApiKey(name: string, tier: Tier = "free"): Promise<ApiKey> {
+    const key = "sk_live_" + uuid().replace(/-/g, "") + uuid().replace(/-/g, "");
+    const result = await this.pool.query(
+      `INSERT INTO api_keys (key, name, tier) VALUES ($1, $2, $3) RETURNING *`,
+      [key, name, tier]
+    );
+    const row = result.rows[0];
+    return {
+      key: row.key,
+      name: row.name,
+      tier: row.tier as Tier,
+      active: row.active,
+      usageCount: row.usage_count,
+      createdAt: row.created_at.toISOString(),
+    };
+  }
+
+  async getApiKey(key: string): Promise<ApiKey | undefined> {
+    const result = await this.pool.query(`SELECT * FROM api_keys WHERE key = $1`, [key]);
+    if (!result.rows[0]) return undefined;
+    const row = result.rows[0];
+    return {
+      key: row.key,
+      name: row.name,
+      tier: row.tier as Tier,
+      active: row.active,
+      usageCount: row.usage_count,
+      createdAt: row.created_at.toISOString(),
+    };
+  }
+
+  async listApiKeys(): Promise<ApiKey[]> {
+    const result = await this.pool.query(`SELECT * FROM api_keys ORDER BY created_at DESC`);
+    return result.rows.map((row: any) => ({
+      key: row.key,
+      name: row.name,
+      tier: row.tier as Tier,
+      active: row.active,
+      usageCount: row.usage_count,
+      createdAt: row.created_at.toISOString(),
+    }));
+  }
+
+  async deleteApiKey(key: string): Promise<boolean> {
+    const result = await this.pool.query(`DELETE FROM api_keys WHERE key = $1`, [key]);
+    return result.rowCount > 0;
+  }
+
+  async incrementApiKeyUsage(key: string): Promise<void> {
+    await this.pool.query(`UPDATE api_keys SET usage_count = usage_count + 1 WHERE key = $1`, [key]);
+  }
+
+  async updateApiKeyTier(key: string, tier: Tier): Promise<boolean> {
+    const result = await this.pool.query(`UPDATE api_keys SET tier = $1 WHERE key = $2`, [tier, key]);
+    return result.rowCount > 0;
+  }
+
+  async registerWebhook(url: string, attestationId: string | null, secret?: string): Promise<Webhook> {
+    const id = uuid();
+    const result = await this.pool.query(
+      `INSERT INTO webhooks (id, url, attestation_id, secret) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [id, url, attestationId, secret || null]
+    );
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      url: row.url,
+      attestationId: row.attestation_id,
+      secret: row.secret,
+      createdAt: row.created_at.toISOString(),
+    };
+  }
+
+  async getWebhooksForAttestation(attestationId: string): Promise<Webhook[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM webhooks WHERE attestation_id IS NULL OR attestation_id = $1`,
+      [attestationId]
+    );
+    return result.rows.map((row: any) => ({
+      id: row.id,
+      url: row.url,
+      attestationId: row.attestation_id,
+      secret: row.secret,
+      createdAt: row.created_at.toISOString(),
+    }));
+  }
+
+  async getWebhook(id: string): Promise<Webhook | undefined> {
+    const result = await this.pool.query(`SELECT * FROM webhooks WHERE id = $1`, [id]);
+    if (!result.rows[0]) return undefined;
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      url: row.url,
+      attestationId: row.attestation_id,
+      secret: row.secret,
+      createdAt: row.created_at.toISOString(),
+    };
+  }
+
+  async removeWebhook(id: string): Promise<boolean> {
+    const result = await this.pool.query(`DELETE FROM webhooks WHERE id = $1`, [id]);
+    return result.rowCount > 0;
+  }
+}
+
+let storeInstance: Store;
+
+if (process.env.DATABASE_URL) {
+  console.log("Using PostgreSQL storage");
+  storeInstance = new PostgresStore(process.env.DATABASE_URL);
+} else {
+  console.log("Using JSON file storage");
+  storeInstance = new JsonFileStore();
+}
+
+export const store = storeInstance;
+
+export function getStoreHealth(): StoreHealth {
+  return storeInstance.getHealth();
+}
+
+export function getJsonStoreData(): PersistedData | null {
+  if (storeInstance instanceof JsonFileStore) {
+    return storeInstance.getData();
+  }
+  return null;
+}

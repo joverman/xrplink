@@ -37,12 +37,16 @@ const proofData = {
   ],
 };
 
-const a = store.createAttestation(TX_HASH);
-store.updateAttestation(a.id, {
-  roundId: 1393372,
-  abiEncodedRequest: "",
-  proof: proofData,
-  status: "verified",
-  verifiedTxHash: "0xb5a17f0e7d3e990a3d56bc2394a93af1debee098ba1c64012de0bfb3810058d8",
-});
-console.log("Seeded attestation:", a.id, "for tx:", TX_HASH);
+async function main() {
+  const a = await store.createAttestation(TX_HASH);
+  await store.updateAttestation(a.id, {
+    roundId: 1393372,
+    abiEncodedRequest: "",
+    proof: proofData,
+    status: "verified",
+    verifiedTxHash: "0xb5a17f0e7d3e990a3d56bc2394a93af1debee098ba1c64012de0bfb3810058d8",
+  });
+  console.log("Seeded attestation:", a.id, "for tx:", TX_HASH);
+}
+
+main().catch(console.error);
