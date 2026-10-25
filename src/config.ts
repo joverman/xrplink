@@ -46,8 +46,18 @@ const resolvedVerifier = network === "flare"
   : (process.env.PAYMENT_VERIFIER_ADDRESS_COSTON2 || "");
 
 // Backward compat: scripts that read process.env.PRIVATE_KEY directly still work
-process.env.PRIVATE_KEY = resolvedKey || process.env.PRIVATE_KEY;
-process.env.PAYMENT_VERIFIER_ADDRESS = resolvedVerifier || process.env.PAYMENT_VERIFIER_ADDRESS;
+// Only set if we have a real value - never write undefined/empty to process.env
+if (resolvedKey) {
+  process.env.PRIVATE_KEY = resolvedKey;
+} else if (process.env.PRIVATE_KEY) {
+  // Keep existing value
+}
+
+if (resolvedVerifier) {
+  process.env.PAYMENT_VERIFIER_ADDRESS = resolvedVerifier;
+} else if (process.env.PAYMENT_VERIFIER_ADDRESS) {
+  // Keep existing value
+}
 
 export const config = {
   network,

@@ -44,6 +44,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Smoke test (production boot)
+        run: bash test/smoke-test.sh
+
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest

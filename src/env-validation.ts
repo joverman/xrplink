@@ -16,6 +16,16 @@ function isValidEthereumAddress(address: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(address);
 }
 
+/**
+ * Check if an env value is effectively unset.
+ * Treats empty string, "undefined", and actual undefined as unset.
+ * This handles the edge case where assigning undefined to process.env
+ * results in the string "undefined".
+ */
+export function isEffectivelyUnset(value: string | undefined): boolean {
+  return !value || value === "" || value === "undefined";
+}
+
 export function isProduction(): boolean {
   return (
     process.env.NODE_ENV === "production" ||
@@ -76,13 +86,13 @@ export function validateEnv(): EnvValidationResult {
   // On-chain verification is disabled when not set, but the app still works
   const verifierAddressEnv =
     network === "flare" ? "PAYMENT_VERIFIER_ADDRESS_FLARE" : "PAYMENT_VERIFIER_ADDRESS_COSTON2";
-  const verifierAddress = process.env[verifierAddressEnv] || process.env.PAYMENT_VERIFIER_ADDRESS;
-  if (!verifierAddress) {
+  const verifierAddressRaw = process.env[verifierAddressEnv] || process.env.PAYMENT_VERIFIER_ADDRESS;
+  if (isEffectivelyUnset(verifierAddressRaw)) {
     warnings.push(
       `${verifierAddressEnv} not set. On-chain proof verification is disabled. ` +
         "Deploy the PaymentVerifier contract and set this address to enable verification."
     );
-  } else if (!isValidEthereumAddress(verifierAddress)) {
+  } else if (!isValidEthereumAddress(verifierAddressRaw as string)) {
     errors.push(
       `${verifierAddressEnv} is not a valid Ethereum address. ` +
         "Expected format: 0x followed by 40 hex characters (e.g., 0x1234...abcd)."
