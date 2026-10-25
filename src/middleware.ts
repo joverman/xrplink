@@ -5,13 +5,13 @@ import { formatError } from "./mcp/errors.js";
 import { getUserFromToken } from "./auth.js";
 import { getSessionToken } from "./session.js";
 
-export function requireApiKey(req: Request, res: Response, next: NextFunction) {
+export async function requireApiKey(req: Request, res: Response, next: NextFunction) {
   const key = req.headers["x-api-key"] as string;
   if (!key) {
     return res.status(401).json(formatError("MISSING_API_KEY"));
   }
 
-  const apiKey = store.getApiKey(key);
+  const apiKey = await store.getApiKey(key);
   if (!apiKey || !apiKey.active) {
     return res.status(403).json(formatError("INVALID_API_KEY"));
   }

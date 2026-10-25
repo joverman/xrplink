@@ -107,10 +107,9 @@ export async function handleWebhook(
         tier: tier as "paid" | "pro",
         stripeCustomerId: session.customer as string,
       });
-      // Upgrade the user's API key tier
       const user = userStore.findById(userId)!;
       for (const keyId of user.apiKeyIds) {
-        store.updateApiKeyTier(keyId, tier as "paid" | "pro");
+        await store.updateApiKeyTier(keyId, tier as "paid" | "pro");
       }
       console.log(`Upgraded user ${userId} to ${tier}`);
     }

@@ -26,7 +26,7 @@ router.post("/auth/signup", async (req: Request, res: Response) => {
   const { email, password } = req.body || {};
   const result = await import("./auth.js").then((m) => m.signup(email, password));
   if (!result.ok) {
-    return res.status(400).json(formatError("AUTH_FAILED", { message: result.error }));
+    return res.status(400).json(formatError("AUTH_FAILED", { message: result.error || "Signup failed" }));
   }
   const { setSessionCookie } = await import("./session.js");
   setSessionCookie(res, result.token!);
@@ -37,7 +37,7 @@ router.post("/auth/login", async (req: Request, res: Response) => {
   const { email, password } = req.body || {};
   const result = await import("./auth.js").then((m) => m.login(email, password));
   if (!result.ok) {
-    return res.status(401).json(formatError("AUTH_FAILED", { message: result.error }));
+    return res.status(401).json(formatError("AUTH_FAILED", { message: result.error || "Login failed" }));
   }
   const { setSessionCookie } = await import("./session.js");
   setSessionCookie(res, result.token!);
@@ -62,21 +62,22 @@ router.post("/auth/reset-password/confirm", async (req: Request, res: Response) 
   const { token, password } = req.body || {};
   if (!token || !password) return res.status(400).json(formatError("MISSING_PARAMS"));
   const result = await import("./auth.js").then((m) => m.resetPassword(token, password));
-  if (!result.ok) return res.status(401).json(formatError("AUTH_FAILED", { message: result.error }));
+  if (!result.ok) return res.status(401).json(formatError("AUTH_FAILED", { message: result.error || "Reset failed" }));
   return res.json({ ok: true });
 });
 
-router.get("/me", requireAuth, (req: Request, res: Response) => {
+router.get("/me", requireAuth, async (req: Request, res: Response) => {
   const user = (req as any).user;
-  const keys = store.listApiKeys().filter((k) => user.apiKeyIds.includes(k.key));
+  const allKeys = await store.listApiKeys();
+  const keys = allKeys.filter((k) => user.apiKeyIds.includes(k.key));
   res.json({ user: { id: user.id, email: user.email, tier: user.tier, createdAt: user.createdAt, usageCount: keys.reduce((s, k) => s + k.usageCount, 0) }, apiKeys: keys });
 });
 
-router.get("/receipts", requireAuth, (req: Request, res: Response) => {
+router.get("/receipts", requireAuth, async (req: Request, res: Response) => {
   const user = (req as any).user;
-  const keys = store.listApiKeys().filter((k) => user.apiKeyIds.includes(k.key));
-  // Attestations are currently global — return all for now (filter by user in future)
-  const all = store.listAttestations();
+  const allKeys = await store.listApiKeys();
+  const keys = allKeys.filter((k) => user.apiKeyIds.includes(k.key));
+  const all = await store.listAttestations();
   res.json(all.slice(0, 50));
 });
 
@@ -499,10 +500,14 @@ router.post("/contact", async (req: Request, res: Response) => {
 
 // --- Public endpoints ---
 
-router.get("/health", (_req: Request, res: Response) => {
+router.get("/health", async (_req: Request, res: Response) => {
   const wl = whiteLabel.get();
-  res.json({
-    status: "ok",
+  const { getStoreHealth } = await import("./store.js");
+  const storeHealth = getStoreHealth();
+  
+  const isHealthy = storeHealth.ok;
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? "ok" : "degraded",
     brand: wl.brandName,
     companyUrl: wl.companyUrl,
     network: config.network,
@@ -511,6 +516,7 @@ router.get("/health", (_req: Request, res: Response) => {
     chainId: activeNetwork.chainId,
     fdcHub: activeNetwork.fdcHub,
     uptime: process.uptime(),
+    storage: storeHealth,
   });
 });
 
@@ -838,7 +844,11 @@ function expressJsonWithRaw(req: Request, res: Response, next: express.NextFunct
 
 // --- Public Receipt Page ---
 
-const XRP_RPC_URL = "https://s1.ripple.com:51234";
+const XRP_RPC_ENDPOINTS = [
+  "https://s1.ripple.com:51234",
+  "https://s2.ripple.com:51234",
+  "https://xrplcluster.com",
+];
 
 interface XrplTxResult {
   Account: string;
@@ -853,21 +863,39 @@ interface XrplTxResult {
 }
 
 async function fetchXrplTx(txHash: string): Promise<XrplTxResult | null> {
-  try {
-    const res = await fetch(XRP_RPC_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        method: "tx",
-        params: [{ transaction: txHash, binary: false }],
-      }),
-    });
-    const data: any = await res.json();
-    if (data.result?.Account) return data.result;
-    return null;
-  } catch {
-    return null;
+  let lastError: Error | null = null;
+
+  for (const endpoint of XRP_RPC_ENDPOINTS) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          method: "tx",
+          params: [{ transaction: txHash, binary: false }],
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      const data: any = await res.json();
+      if (data.result?.Account) return data.result;
+      if (data.result?.error === "txnNotFound") return null;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.warn(`XRPL endpoint ${endpoint} failed:`, lastError.message);
+      continue;
+    }
   }
+
+  if (lastError) {
+    console.error("All XRPL endpoints failed:", lastError.message);
+  }
+  return null;
 }
 
 function formatXrpAmount(drops: string): string {
@@ -889,8 +917,9 @@ function escapeHtml(s: string): string {
 }
 
 router.get("/receipt/:txHash", async (req: Request, res: Response) => {
-  const txHash = req.params.txHash.replace(/^0x/i, "").toUpperCase();
-  const attestation = store.getByTxHash(txHash);
+  const txHashParam = Array.isArray(req.params.txHash) ? req.params.txHash[0] : req.params.txHash;
+  const txHash = txHashParam.replace(/^0x/i, "").toUpperCase();
+  const attestation = await store.getByTxHash(txHash);
   const wl = whiteLabel.get();
 
   const shareUrl = `https://${wl.companyUrl.replace(/^https?:\/\//, "")}/receipt/${txHash}`;
@@ -1062,7 +1091,7 @@ ${txData.DestinationTag ? `<div class="row"><span class="key">Destination Tag</s
   <br><br>
   <code style="display:block;background:#fef3c7;padding:0.75rem;border-radius:6px;margin-top:0.5rem;line-height:1.5">
     # Get an API key at /dashboard<br>
-    curl -X POST https://${req.headers.host}/api/v1/verify/xrp-payment \<br>
+    curl -X POST https://${String(req.headers.host || "xrp-link.com")}/api/v1/verify/xrp-payment \<br>
     &nbsp;&nbsp;-H "Content-Type: application/json" \<br>
     &nbsp;&nbsp;-H "X-API-Key: sk_live_..." \<br>
     &nbsp;&nbsp;-d '{"txHash": "${txHash}"}'
@@ -1112,7 +1141,7 @@ router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, re
     return res.status(400).json(formatError("INVALID_TX_HASH"));
   }
 
-  const cached = store.getByTxHash(cleanHash);
+  const cached = await store.getByTxHash(cleanHash);
   if (cached) {
     if (cached.status === "verified") {
       return res.json({ id: cached.id, txHash: cleanHash, roundId: cached.roundId, status: cached.status, cached: true });
@@ -1124,22 +1153,22 @@ router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, re
     try {
       const alreadyVerified = await fdc.isAlreadyVerified(cleanHash);
       if (alreadyVerified) {
-        const record = store.createAttestation(cleanHash);
-        store.updateAttestation(record.id, { status: "verified" });
+        const record = await store.createAttestation(cleanHash);
+        await store.updateAttestation(record.id, { status: "verified" });
         return res.json({ id: record.id, txHash: cleanHash, roundId: null, status: "verified" } satisfies VerifyResponse);
       }
     } catch {}
   }
 
-  const attestation = store.createAttestation(cleanHash);
+  const attestation = await store.createAttestation(cleanHash);
 
   try {
     const proofOwner = fdc.getProofOwner();
     const abiEncoded = await fdc.prepareRequest(cleanHash, proofOwner);
-    store.updateAttestation(attestation.id, { abiEncodedRequest: abiEncoded });
+    await store.updateAttestation(attestation.id, { abiEncodedRequest: abiEncoded });
 
     const { roundId, txHash: submitTxHash } = await fdc.submitRequest(abiEncoded);
-    store.updateAttestation(attestation.id, { roundId, status: "pending" });
+    await store.updateAttestation(attestation.id, { roundId, status: "pending" });
 
     console.log(`Attestation ${attestation.id}: submitted to round ${roundId} (tx: ${submitTxHash})`);
 
@@ -1151,14 +1180,15 @@ router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, re
     return res.status(202).json({ id: attestation.id, txHash: cleanHash, roundId, status: "pending" } satisfies VerifyResponse);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    store.updateAttestation(attestation.id, { status: "failed", error: message });
+    await store.updateAttestation(attestation.id, { status: "failed", error: message });
     console.error(`Attestation ${attestation.id} failed:`, message);
     return res.status(500).json(formatError("SUBMIT_FAILED", { message }));
   }
 });
 
-router.get("/api/v1/status/:id", requireApiKey, (req: Request, res: Response) => {
-  const attestation = store.getAttestation(req.params.id);
+router.get("/api/v1/status/:id", requireApiKey, async (req: Request, res: Response) => {
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const attestation = await store.getAttestation(id);
   if (!attestation) {
     return res.status(404).json(formatError("NOT_FOUND"));
   }
@@ -1169,12 +1199,13 @@ router.get("/api/v1/status/:id", requireApiKey, (req: Request, res: Response) =>
   } satisfies StatusResponse);
 });
 
-router.get("/api/v1/status-by-tx/:txHash", requireApiKey, (req: Request, res: Response) => {
-  const txHash = req.params.txHash.replace(/^0x/i, "").toUpperCase();
+router.get("/api/v1/status-by-tx/:txHash", requireApiKey, async (req: Request, res: Response) => {
+  const txHashParam = Array.isArray(req.params.txHash) ? req.params.txHash[0] : req.params.txHash;
+  const txHash = txHashParam.replace(/^0x/i, "").toUpperCase();
   if (!isHexTxHash(txHash)) {
     return res.status(400).json(formatError("INVALID_TX_HASH"));
   }
-  const attestation = store.getByTxHash(txHash);
+  const attestation = await store.getByTxHash(txHash);
   if (!attestation) {
     return res.status(404).json(formatError("NOT_FOUND"));
   }
@@ -1185,7 +1216,7 @@ router.get("/api/v1/status-by-tx/:txHash", requireApiKey, (req: Request, res: Re
   } satisfies StatusResponse);
 });
 
-router.post("/api/v1/webhooks", requireApiKey, (req: Request, res: Response) => {
+router.post("/api/v1/webhooks", requireApiKey, async (req: Request, res: Response) => {
   const { url, attestationId } = req.body as RegisterWebhookBody;
   if (!url || typeof url !== "string") {
     return res.status(400).json(formatError("MISSING_URL"));
@@ -1196,10 +1227,10 @@ router.post("/api/v1/webhooks", requireApiKey, (req: Request, res: Response) => 
   } catch {
     return res.status(400).json(formatError("INVALID_URL"));
   }
-  if (attestationId && !store.getAttestation(attestationId)) {
+  if (attestationId && !(await store.getAttestation(attestationId))) {
     return res.status(400).json(formatError("MISSING_ATTESTATION_ID"));
   }
-  const webhook = store.registerWebhook(url, attestationId || null);
+  const webhook = await store.registerWebhook(url, attestationId || null);
   return res.status(201).json({ id: webhook.id, url: webhook.url, attestationId: webhook.attestationId });
 });
 
@@ -1220,30 +1251,31 @@ router.put("/api/v1/admin/white-label", requireApiKey, (req: Request, res: Respo
   res.json(updated);
 });
 
-router.post("/api/v1/admin/keys", requireApiKey, (req: Request, res: Response) => {
+router.post("/api/v1/admin/keys", requireApiKey, async (req: Request, res: Response) => {
   const requester = (req as any).apiKey;
   if (!requester || requester.tier !== "pro") {
     return res.status(403).json(formatError("FORBIDDEN"));
   }
   const { name, tier } = req.body as { name?: string; tier?: Tier };
-  const apiKey = store.createApiKey(name || "unnamed", tier || "free");
+  const apiKey = await store.createApiKey(name || "unnamed", tier || "free");
   return res.status(201).json({ key: apiKey.key, name: apiKey.name, tier: apiKey.tier });
 });
 
-router.get("/api/v1/admin/keys", requireApiKey, (req: Request, res: Response) => {
+router.get("/api/v1/admin/keys", requireApiKey, async (req: Request, res: Response) => {
   const requester = (req as any).apiKey;
   if (!requester || requester.tier !== "pro") {
     return res.status(403).json(formatError("FORBIDDEN"));
   }
-  return res.json(store.listApiKeys());
+  return res.json(await store.listApiKeys());
 });
 
-router.delete("/api/v1/admin/keys/:key", requireApiKey, (req: Request, res: Response) => {
+router.delete("/api/v1/admin/keys/:key", requireApiKey, async (req: Request, res: Response) => {
   const requester = (req as any).apiKey;
   if (!requester || requester.tier !== "pro") {
     return res.status(403).json(formatError("FORBIDDEN"));
   }
-  const deleted = store.deleteApiKey(req.params.key);
+  const keyParam = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
+  const deleted = await store.deleteApiKey(keyParam);
   if (!deleted) {
     return res.status(404).json(formatError("NOT_FOUND"));
   }
@@ -1262,30 +1294,29 @@ async function pollForProof(id: string, roundId: number, abiEncoded: string, att
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Poll attempt ${attempt} for ${id}: ${message}`);
     if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-    store.updateAttestation(id, { status: "failed", error: `Polling exhausted: ${message}` });
+    await store.updateAttestation(id, { status: "failed", error: `Polling exhausted: ${message}` });
     return;
   }
 
   if (!proofData) {
     console.log(`Poll attempt ${attempt} for ${id}: not ready yet`);
     if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-    store.updateAttestation(id, { status: "not_found", error: "Proof not found after max poll attempts" });
+    await store.updateAttestation(id, { status: "not_found", error: "Proof not found after max poll attempts" });
     return;
   }
 
-  store.updateAttestation(id, { proof: proofData, status: "ready" });
+  await store.updateAttestation(id, { proof: proofData, status: "ready" });
 
   if (config.paymentVerifierAddress) {
     try {
       const verifiedTxHash = await fdc.verifyProofOnChain(proofData, config.paymentVerifierAddress);
-      store.updateAttestation(id, { verifiedTxHash, status: "verified" });
+      await store.updateAttestation(id, { verifiedTxHash, status: "verified" });
       console.log(`Attestation ${id}: verified on-chain (${verifiedTxHash})`);
-      // Notify SSE clients
       notifySseClients({ event: "attestation.completed", id, status: "verified", verifiedTxHash });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Attestation ${id}: on-chain verification failed:`, message);
-      store.updateAttestation(id, { error: message });
+      await store.updateAttestation(id, { error: message });
     }
   }
 

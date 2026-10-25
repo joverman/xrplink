@@ -72,7 +72,7 @@ export async function handleVerifyXrpPayment(args: Record<string, unknown>) {
     return { isError: true, content: [{ type: "text" as const, text: `${err.message}\n\n${err.suggestedAction}` }] };
   }
 
-  const cached = store.getByTxHash(cleanHash);
+  const cached = await store.getByTxHash(cleanHash);
   if (cached) {
     return {
       content: [{ type: "text" as const, text: `Attestation already ${cached.status}\n\n${JSON.stringify({ id: cached.id, txHash: cleanHash, roundId: cached.roundId, status: cached.status, verifiedTxHash: cached.verifiedTxHash, cached: true }, null, 2)}` }],
@@ -82,20 +82,20 @@ export async function handleVerifyXrpPayment(args: Record<string, unknown>) {
   if (config.paymentVerifierAddress) {
     try {
       if (await fdc.isAlreadyVerified(cleanHash)) {
-        const record = store.createAttestation(cleanHash);
-        store.updateAttestation(record.id, { status: "verified" });
+        const record = await store.createAttestation(cleanHash);
+        await store.updateAttestation(record.id, { status: "verified" });
         return { content: [{ type: "text" as const, text: `Transaction already verified on-chain\n\n${JSON.stringify({ id: record.id, txHash: cleanHash, status: "verified" }, null, 2)}` }] };
       }
     } catch {}
   }
 
-  const attestation = store.createAttestation(cleanHash);
+  const attestation = await store.createAttestation(cleanHash);
   try {
     const proofOwner = fdc.getProofOwner();
     const abiEncoded = await fdc.prepareRequest(cleanHash, proofOwner);
-    store.updateAttestation(attestation.id, { abiEncodedRequest: abiEncoded });
+    await store.updateAttestation(attestation.id, { abiEncodedRequest: abiEncoded });
     const { roundId } = await fdc.submitRequest(abiEncoded);
-    store.updateAttestation(attestation.id, { roundId, status: "pending" });
+    await store.updateAttestation(attestation.id, { roundId, status: "pending" });
 
     pollForProof(attestation.id, roundId, abiEncoded).catch((err) => {
       console.error(`MCP poll failed for ${attestation.id}:`, err.message);
@@ -109,33 +109,35 @@ export async function handleVerifyXrpPayment(args: Record<string, unknown>) {
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    store.updateAttestation(attestation.id, { status: "failed", error: message });
+    await store.updateAttestation(attestation.id, { status: "failed", error: message });
     return { isError: true, content: [{ type: "text" as const, text: `Submission failed: ${message}` }] };
   }
 }
 
 export async function handleGetAttestationStatus(args: Record<string, unknown>) {
   const id = args.id as string;
-  const a = store.getAttestation(id);
+  const a = await store.getAttestation(id);
   if (!a) return { isError: true, content: [{ type: "text" as const, text: `Attestation not found: ${id}` }] };
   return { content: [{ type: "text" as const, text: JSON.stringify(a, null, 2) }] };
 }
 
 export async function handleLookupByTx(args: Record<string, unknown>) {
   const txHash = (args.txHash as string).replace(/^0x/i, "").toUpperCase();
-  const a = store.getByTxHash(txHash);
+  const a = await store.getByTxHash(txHash);
   if (!a) return { isError: true, content: [{ type: "text" as const, text: `No attestation found for txHash: ${txHash}` }] };
   return { content: [{ type: "text" as const, text: JSON.stringify(a, null, 2) }] };
 }
 
 export async function handleGetAttestationByRound(args: Record<string, unknown>) {
   const roundId = Number(args.roundId);
-  const all = store.listAttestations().filter((a) => a.roundId === roundId);
-  return { content: [{ type: "text" as const, text: all.length ? JSON.stringify(all, null, 2) : `No attestations found for round ${roundId}` }] };
+  const all = await store.listAttestations();
+  const filtered = all.filter((a) => a.roundId === roundId);
+  return { content: [{ type: "text" as const, text: filtered.length ? JSON.stringify(filtered, null, 2) : `No attestations found for round ${roundId}` }] };
 }
 
 export async function handleGetServerInfo() {
   const wl = whiteLabel.get();
+  const attestations = await store.listAttestations();
   return {
     content: [{ type: "text" as const, text: JSON.stringify({
       brand: wl.brandName,
@@ -147,7 +149,7 @@ export async function handleGetServerInfo() {
       fdcHub: activeNetwork.fdcHub,
       companyUrl: wl.companyUrl,
       uptime: process.uptime(),
-      attestationCount: store.listAttestations().length,
+      attestationCount: attestations.length,
     }, null, 2) }],
   };
 }
@@ -158,17 +160,17 @@ async function pollForProof(id: string, roundId: number, abiEncoded: string, att
     const proofData = await fdc.fetchProof(roundId, abiEncoded);
     if (!proofData) {
       if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-      store.updateAttestation(id, { status: "not_found", error: "Proof not found after max poll attempts" });
+      await store.updateAttestation(id, { status: "not_found", error: "Proof not found after max poll attempts" });
       return;
     }
-    store.updateAttestation(id, { proof: proofData, status: "ready" });
+    await store.updateAttestation(id, { proof: proofData, status: "ready" });
     if (config.paymentVerifierAddress) {
       const verifiedTxHash = await fdc.verifyProofOnChain(proofData, config.paymentVerifierAddress);
-      store.updateAttestation(id, { verifiedTxHash, status: "verified" });
+      await store.updateAttestation(id, { verifiedTxHash, status: "verified" });
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-    store.updateAttestation(id, { status: "failed", error: message });
+    await store.updateAttestation(id, { status: "failed", error: message });
   }
 }
