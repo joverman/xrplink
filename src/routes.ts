@@ -713,13 +713,19 @@ function renderDashboard(data) {
       <div class="upgrade-banner">
         <h3>Upgrade to create verified receipts</h3>
         <p>Your free plan includes receipt lookup only. Upgrade to attest payments and generate cryptographic proofs.</p>
-        <button onclick="subscribe('paid')" class="btn btn-primary">Subscribe — \$29/mo</button>
-        <a href="/#pricing" class="btn btn-outline" style="margin-left:0.5rem">See All Plans</a>
+        <button onclick="subscribe('paid')" class="btn btn-primary">Paid — \$29/mo</button>
+        <button onclick="subscribe('pro')" class="btn btn-outline" style="margin-left:0.5rem">Pro — \$99/mo</button>
+      </div>
+    \` : tier === 'paid' ? \`
+      <div class="upgrade-banner" style="background:linear-gradient(135deg,#065f46,#0f172a);border-color:#065f46">
+        <h3>✓ You're on the Paid plan</h3>
+        <p>5 verified receipts per month. Need more? Upgrade to Pro for 25 receipts and unlimited rate limits.</p>
+        <button onclick="subscribe('pro')" class="btn btn-outline" style="margin-top:0.5rem">Upgrade to Pro — \$99/mo</button>
       </div>
     \` : \`
-      <div class="upgrade-banner" style="background:linear-gradient(135deg,#065f46,#0f172a);border-color:#065f46">
-        <h3>✓ You're on the \${tier.charAt(0).toUpperCase() + tier.slice(1)} plan</h3>
-        <p>You can now attest payments and generate verified receipts. Use the form above to verify an XRP payment.</p>
+      <div class="upgrade-banner" style="background:linear-gradient(135deg,#3b1e5f,#0f172a);border-color:#3b1e5f">
+        <h3>✓ You're on the Pro plan</h3>
+        <p>25 verified receipts per month with unlimited rate limits. You have full access to all features.</p>
       </div>
     \`}
   \`;

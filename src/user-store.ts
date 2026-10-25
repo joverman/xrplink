@@ -6,13 +6,17 @@ import { Tier } from "./types.js";
 const DATA_DIR = "data";
 const USERS_PATH = `${DATA_DIR}/users.json`;
 
+export type SubscriptionStatus = "active" | "past_due" | "canceled" | "none";
+
 export interface StoredUser {
   id: string;
   email: string;
   passwordHash: string;
   apiKeyIds: string[];
   stripeCustomerId: string;
+  stripeSubscriptionId: string;
   tier: Tier;
+  subscriptionStatus: SubscriptionStatus;
   createdAt: string;
 }
 
@@ -78,13 +82,22 @@ class UserStore {
       passwordHash,
       apiKeyIds: [],
       stripeCustomerId: "",
+      stripeSubscriptionId: "",
       tier: "free",
+      subscriptionStatus: "none",
       createdAt: new Date().toISOString(),
     };
     this.data.users[id] = user;
     this.data.emailIndex[email.toLowerCase()] = id;
     this.persist();
     return user;
+  }
+
+  findByStripeCustomerId(customerId: string): StoredUser | undefined {
+    for (const user of Object.values(this.data.users)) {
+      if (user.stripeCustomerId === customerId) return user;
+    }
+    return undefined;
   }
 
   update(id: string, updates: Partial<StoredUser>) {

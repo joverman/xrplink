@@ -30,6 +30,71 @@ On-chain proof verification is disabled when this is not set. The app works with
 |----------|-------------|
 | `STRIPE_SECRET_KEY` | Stripe secret API key |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
+| `STRIPE_AUTOMATIC_TAX` | Enable Stripe Tax (optional) | `false` |
+
+## Stripe Go-Live Checklist
+
+Before switching from Stripe test mode to live mode:
+
+### 1. Create Live Mode Prices
+
+The app automatically creates prices with lookup keys if they don't exist:
+- `xrplink_paid` — $29/month (Paid plan)
+- `xrplink_pro` — $99/month (Pro plan)
+
+In live mode, the app will create these prices when it starts if they don't exist.
+
+### 2. Configure Webhook Endpoint
+
+In the Stripe Dashboard → Developers → Webhooks:
+
+1. Add endpoint: `https://your-domain.com/webhooks/stripe`
+2. Select events to send:
+   - `checkout.session.completed` — Initial subscription signup
+   - `customer.subscription.updated` — Plan changes, status updates
+   - `customer.subscription.deleted` — Subscription cancellations
+   - `invoice.payment_failed` — Failed payment attempts
+   - `invoice.paid` — Successful payments (clears past_due status)
+
+3. Copy the webhook signing secret to `STRIPE_WEBHOOK_SECRET`
+
+### 3. Enable Customer Portal (Auto-Configured)
+
+The app automatically creates a billing portal configuration if none exists:
+- Cancel subscription at period end
+- Update payment method
+- View invoice history
+- Switch between Paid and Pro plans
+
+### 4. Set Environment Variables
+
+```bash
+# Live mode keys
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+# Optional: Enable automatic tax collection
+STRIPE_AUTOMATIC_TAX=true
+```
+
+### 5. Test the Live Integration
+
+1. Create a test subscription using a real card
+2. Verify webhook events are received
+3. Test cancellation via customer portal
+4. Verify downgrade to free tier works
+
+### Subscription Status Handling
+
+| Stripe Event | App Action |
+|-------------|------------|
+| `checkout.session.completed` | Upgrade user to selected tier, set status=active |
+| `customer.subscription.updated` | Sync tier from price lookup_key, update status |
+| `customer.subscription.deleted` | Downgrade to free tier, set status=canceled |
+| `invoice.payment_failed` | Set status=past_due (grace period until Stripe retries end) |
+| `invoice.paid` | Clear past_due status, set status=active |
+
+Users in `past_due` status retain their tier during Stripe's automatic retry period. If all retries fail, Stripe cancels the subscription and the user is downgraded to free.
 
 ### Recommended for Production
 
