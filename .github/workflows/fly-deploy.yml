@@ -1,4 +1,8 @@
 # See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
+#
+# Fly deploy is MANUAL ONLY (workflow_dispatch) while self-hosting via Docker.
+# To re-enable auto-deploy on push to main, change the deploy job's 'if' condition:
+#   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
 name: Fly Deploy
 on:
@@ -8,6 +12,12 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy to Fly.io'
+        required: true
+        default: 'true'
 
 jobs:
   test:
@@ -38,7 +48,9 @@ jobs:
     name: Deploy app
     runs-on: ubuntu-latest
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Manual deploy only (workflow_dispatch). Merging to main does NOT auto-deploy.
+    # To re-enable auto-deploy: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch'
     concurrency: deploy-group
     steps:
       - uses: actions/checkout@v4
