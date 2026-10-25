@@ -21,8 +21,9 @@ services:
       - NODE_ENV=production
       - FLARE_NETWORK=flare
       - DATA_DIR=/app/data
-      # Trust proxy headers from Cloudflare Tunnel
-      - TRUST_PROXY=true
+      # TRUST_PROXY: defaults to loopback,linklocal,uniquelocal (safe)
+      # Only set to "true" if cloudflared is in a trusted Docker network
+      # - TRUST_PROXY=true
       # Required secrets (set via .env file or uncomment and fill in)
       - SESSION_SECRET=${SESSION_SECRET}
       - VERIFIER_API_KEY=${VERIFIER_API_KEY}

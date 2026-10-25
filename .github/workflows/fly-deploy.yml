@@ -47,6 +47,62 @@ jobs:
       - name: Smoke test (production boot)
         run: bash test/smoke-test.sh
 
+  docker-build:
+    name: Docker Build and Boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t xrplink:ci .
+
+      - name: Boot container with production config
+        run: |
+          docker run -d --name xrplink-ci \
+            -p 3000:3000 \
+            -e NODE_ENV=production \
+            -e FLARE_NETWORK=flare \
+            -e SESSION_SECRET="ci-docker-test-secret-32-chars!!" \
+            -e VERIFIER_API_KEY="ci-docker-test-verifier-key-uuid" \
+            -e PRIVATE_KEY_FLARE="0x0000000000000000000000000000000000000000000000000000000000000001" \
+            xrplink:ci
+
+      - name: Wait for container to be healthy
+        run: |
+          echo "Waiting for container to start..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+              echo "Container is healthy after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "Container failed to become healthy"
+              docker logs xrplink-ci
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Verify health endpoint
+        run: |
+          HEALTH=$(curl -sf http://localhost:3000/health)
+          echo "Health response: $HEALTH"
+          if echo "$HEALTH" | grep -q '"status":"ok"'; then
+            echo "✅ Docker build and boot test passed"
+          else
+            echo "❌ Health check failed"
+            docker logs xrplink-ci
+            exit 1
+          fi
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs xrplink-ci
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f xrplink-ci || true
+
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest
