@@ -30,7 +30,7 @@ describe("Environment Validation", () => {
     assert.equal(isProduction(), true);
   });
 
-  it("should report errors for missing required secrets in production", async () => {
+  it("should report error only for SESSION_SECRET in production", async () => {
     process.env.NODE_ENV = "production";
     delete process.env.SESSION_SECRET;
     delete process.env.VERIFIER_API_KEY;
@@ -40,10 +40,29 @@ describe("Environment Validation", () => {
     const { validateEnv } = await import("../src/env-validation.js");
     const result = validateEnv();
     
+    // Only SESSION_SECRET is a hard requirement
     assert.equal(result.valid, false);
     assert.ok(result.errors.some(e => e.includes("SESSION_SECRET")));
-    assert.ok(result.errors.some(e => e.includes("VERIFIER_API_KEY")));
-    assert.ok(result.errors.some(e => e.includes("PRIVATE_KEY")));
+    // VERIFIER_API_KEY and PRIVATE_KEY are now warnings, not errors
+    assert.ok(!result.errors.some(e => e.includes("VERIFIER_API_KEY")));
+    assert.ok(!result.errors.some(e => e.includes("PRIVATE_KEY")));
+    assert.ok(result.warnings.some(w => w.includes("VERIFIER_API_KEY")));
+    assert.ok(result.warnings.some(w => w.includes("PRIVATE_KEY")));
+  });
+
+  it("should accept Flare public API key (all-zeros UUID) in production", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
+    process.env.VERIFIER_API_KEY = "00000000-0000-0000-0000-000000000000";
+    
+    const { validateEnv } = await import("../src/env-validation.js");
+    const result = validateEnv();
+    
+    // App should start with the public API key
+    assert.equal(result.valid, true, `Expected valid=true but got errors: ${result.errors.join(", ")}`);
+    // Should warn but not error
+    assert.ok(result.warnings.some(w => w.includes("VERIFIER_API_KEY")));
+    assert.ok(result.warnings.some(w => w.includes("public")));
   });
 
   it("should warn but not error for missing PAYMENT_VERIFIER_ADDRESS", async () => {

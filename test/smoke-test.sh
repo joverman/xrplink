@@ -4,14 +4,15 @@
 
 set -e
 
-# Production env with required secrets but NO verifier address (the crash scenario)
+# Minimal production config to catch regressions:
+# - All-zeros VERIFIER_API_KEY is Flare's public key (valid for prod)
+# - No PRIVATE_KEY_FLARE (receipt lookup works without it)
+# - No PAYMENT_VERIFIER_ADDRESS_FLARE (on-chain verification is optional)
 export NODE_ENV=production
 export FLARE_NETWORK=flare
 export SESSION_SECRET="ci-smoke-test-secret-32-chars!!"
-export VERIFIER_API_KEY="ci-smoke-test-verifier-key-uuid"
-export PRIVATE_KEY_FLARE="0x0000000000000000000000000000000000000000000000000000000000000001"
+export VERIFIER_API_KEY="00000000-0000-0000-0000-000000000000"
 export START_API=true
-# Deliberately NOT setting PAYMENT_VERIFIER_ADDRESS_FLARE to test the warning path
 
 # Create a FIFO to keep stdin open for MCP stdio server
 FIFO=$(mktemp -u)
