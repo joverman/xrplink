@@ -30,10 +30,12 @@ describe("Environment Validation", () => {
     assert.equal(isProduction(), true);
   });
 
-  it("should report errors for missing secrets in production", async () => {
+  it("should report errors for missing required secrets in production", async () => {
     process.env.NODE_ENV = "production";
     delete process.env.SESSION_SECRET;
     delete process.env.VERIFIER_API_KEY;
+    delete process.env.PRIVATE_KEY_FLARE;
+    delete process.env.PRIVATE_KEY;
     
     const { validateEnv } = await import("../src/env-validation.js");
     const result = validateEnv();
@@ -41,6 +43,54 @@ describe("Environment Validation", () => {
     assert.equal(result.valid, false);
     assert.ok(result.errors.some(e => e.includes("SESSION_SECRET")));
     assert.ok(result.errors.some(e => e.includes("VERIFIER_API_KEY")));
+    assert.ok(result.errors.some(e => e.includes("PRIVATE_KEY")));
+  });
+
+  it("should warn but not error for missing PAYMENT_VERIFIER_ADDRESS", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.FLARE_NETWORK = "flare";
+    process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
+    process.env.VERIFIER_API_KEY = "valid-api-key-uuid";
+    process.env.PRIVATE_KEY_FLARE = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+    delete process.env.PAYMENT_VERIFIER_ADDRESS_FLARE;
+    delete process.env.PAYMENT_VERIFIER_ADDRESS;
+    
+    const { validateEnv } = await import("../src/env-validation.js");
+    const result = validateEnv();
+    
+    assert.equal(result.valid, true, `Expected valid=true but got errors: ${result.errors.join(", ")}`);
+    assert.ok(result.warnings.some(w => w.includes("PAYMENT_VERIFIER_ADDRESS")));
+    assert.ok(result.warnings.some(w => w.includes("On-chain proof verification is disabled")));
+  });
+
+  it("should error for malformed PAYMENT_VERIFIER_ADDRESS", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.FLARE_NETWORK = "flare";
+    process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
+    process.env.VERIFIER_API_KEY = "valid-api-key-uuid";
+    process.env.PRIVATE_KEY_FLARE = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+    process.env.PAYMENT_VERIFIER_ADDRESS_FLARE = "invalid-address";
+    
+    const { validateEnv } = await import("../src/env-validation.js");
+    const result = validateEnv();
+    
+    assert.equal(result.valid, false, `Expected valid=false but got no errors`);
+    assert.ok(result.errors.some(e => e.includes("PAYMENT_VERIFIER_ADDRESS")), `Expected error about PAYMENT_VERIFIER_ADDRESS, got: ${result.errors.join(", ")}`);
+    assert.ok(result.errors.some(e => e.includes("valid Ethereum address")), `Expected error about valid Ethereum address, got: ${result.errors.join(", ")}`);
+  });
+
+  it("should accept well-formed PAYMENT_VERIFIER_ADDRESS", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.FLARE_NETWORK = "flare";
+    process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
+    process.env.VERIFIER_API_KEY = "valid-api-key-uuid";
+    process.env.PRIVATE_KEY_FLARE = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+    process.env.PAYMENT_VERIFIER_ADDRESS_FLARE = "0x1234567890AbcdEF1234567890abcdef12345678";
+    
+    const { validateEnv } = await import("../src/env-validation.js");
+    const result = validateEnv();
+    
+    assert.ok(!result.errors.some(e => e.includes("PAYMENT_VERIFIER_ADDRESS")), `Unexpected error about PAYMENT_VERIFIER_ADDRESS: ${result.errors.join(", ")}`);
   });
 
   it("should report warnings in development for missing secrets", async () => {

@@ -12,6 +12,10 @@ export interface EnvValidationResult {
 const DEV_SESSION_SECRET = "dev-secret-change-in-prod";
 const DEV_VERIFIER_API_KEY = "00000000-0000-0000-0000-000000000000";
 
+function isValidEthereumAddress(address: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(address);
+}
+
 export function isProduction(): boolean {
   return (
     process.env.NODE_ENV === "production" ||
@@ -68,19 +72,21 @@ export function validateEnv(): EnvValidationResult {
     }
   }
 
-  // PAYMENT_VERIFIER_ADDRESS - deployed contract address
+  // PAYMENT_VERIFIER_ADDRESS - deployed contract address (optional)
+  // On-chain verification is disabled when not set, but the app still works
   const verifierAddressEnv =
     network === "flare" ? "PAYMENT_VERIFIER_ADDRESS_FLARE" : "PAYMENT_VERIFIER_ADDRESS_COSTON2";
   const verifierAddress = process.env[verifierAddressEnv] || process.env.PAYMENT_VERIFIER_ADDRESS;
   if (!verifierAddress) {
-    if (isProd) {
-      errors.push(
-        `${verifierAddressEnv} (or PAYMENT_VERIFIER_ADDRESS) is not set. ` +
-          "Required for on-chain proof verification."
-      );
-    } else {
-      warnings.push(`${verifierAddressEnv} not set (on-chain verification disabled).`);
-    }
+    warnings.push(
+      `${verifierAddressEnv} not set. On-chain proof verification is disabled. ` +
+        "Deploy the PaymentVerifier contract and set this address to enable verification."
+    );
+  } else if (!isValidEthereumAddress(verifierAddress)) {
+    errors.push(
+      `${verifierAddressEnv} is not a valid Ethereum address. ` +
+        "Expected format: 0x followed by 40 hex characters (e.g., 0x1234...abcd)."
+    );
   }
 
   // --- Optional but recommended in production ---
@@ -147,6 +153,7 @@ export function printValidationResult(result: EnvValidationResult): void {
     console.error("  SESSION_SECRET         - Secure random string for JWT signing");
     console.error("  VERIFIER_API_KEY       - Flare Data Connector API key");
     console.error("  PRIVATE_KEY_FLARE      - Wallet private key (for flare network)");
+    console.error("\nOptional (on-chain verification disabled without):");
     console.error("  PAYMENT_VERIFIER_ADDRESS_FLARE - Deployed PaymentVerifier contract address");
     console.error("\nOptional but recommended:");
     console.error("  STRIPE_SECRET_KEY      - Stripe API key for billing");

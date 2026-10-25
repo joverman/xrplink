@@ -13,7 +13,16 @@ These must be set before deploying to production. The app will refuse to start i
 | `SESSION_SECRET` | Secret for JWT signing (min 32 chars) | `openssl rand -base64 32` |
 | `VERIFIER_API_KEY` | Flare Data Connector API key | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 | `PRIVATE_KEY_FLARE` | Wallet private key for Flare mainnet | `0x...` (64 hex chars) |
+
+### Optional (On-Chain Verification)
+
+On-chain proof verification is disabled when this is not set. The app works without it (attestations are fetched and returned, but not verified on-chain). Deploy the PaymentVerifier contract and set this address to enable on-chain verification.
+
+| Variable | Description | Example |
+|----------|-------------|---------|
 | `PAYMENT_VERIFIER_ADDRESS_FLARE` | Deployed PaymentVerifier contract | `0x...` (40 hex chars) |
+
+**Note**: If set, the address must be a valid Ethereum address format (0x + 40 hex characters). An invalid format will cause a startup error.
 
 ### Required for Billing (Stripe)
 
@@ -141,11 +150,10 @@ The GitHub Actions workflow now:
 ### Setting Fly Secrets (BEFORE deploying)
 
 ```bash
-# Required
+# Required for startup
 fly secrets set SESSION_SECRET="<your-32-char-secret>"
 fly secrets set VERIFIER_API_KEY="<your-fdc-api-key>"
 fly secrets set PRIVATE_KEY_FLARE="<your-wallet-private-key>"
-fly secrets set PAYMENT_VERIFIER_ADDRESS_FLARE="<deployed-contract-address>"
 
 # Recommended
 fly secrets set DATABASE_URL="postgres://..."
@@ -170,6 +178,16 @@ fly secrets set RESEND_API_KEY="re_..."
    cd /app
    tsx scripts/migrate-to-postgres.ts
    ```
+
+### Enabling On-Chain Verification (Separate Step)
+
+Once the PaymentVerifier contract is deployed on Flare mainnet:
+
+```bash
+fly secrets set PAYMENT_VERIFIER_ADDRESS_FLARE="<deployed-contract-address>"
+```
+
+Until this is set, attestations will be fetched from the FDC but not verified on-chain. The `/health` endpoint will show `paymentVerifier: "not configured"`.
 
 ### Rollback Plan
 
