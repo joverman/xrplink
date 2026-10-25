@@ -49,7 +49,21 @@ On-chain proof verification is disabled when this is not set. The app works with
 | `NODE_ENV` | Environment | `development` |
 | `DATA_DIR` | JSON storage directory | `data` |
 | `DOMAIN` | Base URL for callbacks | `https://xrp-link.com` |
-| `TRUST_PROXY` | Trust proxy headers | `loopback,linklocal,uniquelocal` |
+| `TRUST_PROXY` | Trust proxy headers (see below) | `loopback,linklocal,uniquelocal` |
+
+### TRUST_PROXY Security
+
+The `TRUST_PROXY` setting controls which proxy headers (X-Forwarded-For, CF-Connecting-IP) the app trusts for determining the real client IP address. This affects rate limiting and access logging.
+
+**Default: `loopback,linklocal,uniquelocal`** — Only trust proxies on loopback (127.0.0.1), link-local (169.254.x.x), and private network ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x).
+
+**Options:**
+- `loopback,linklocal,uniquelocal` (default): Safe for most setups. Trusts proxies on private networks only.
+- `true` or `1`: Trust ALL proxy headers. **Only use if cloudflared/nginx is on the same Docker network AND you trust all containers on that network.** Malicious containers could spoof client IPs.
+- `false` or `0`: Don't trust any proxy headers. Use if exposing directly to the internet (not recommended).
+- Specific IP/CIDR: e.g., `172.17.0.1` to trust only the Docker gateway.
+
+**Cloudflare Tunnel recommendation**: The default (`loopback,linklocal,uniquelocal`) works because cloudflared typically runs on localhost or a private Docker network. The app prefers `CF-Connecting-IP` (set by Cloudflare) over `X-Forwarded-For`.
 
 ## Self-Hosting with Docker + Cloudflare Tunnel
 
@@ -128,7 +142,8 @@ services:
       - PORT=3000
       - NODE_ENV=production
       - FLARE_NETWORK=flare
-      - TRUST_PROXY=true
+      # TRUST_PROXY defaults to loopback,linklocal,uniquelocal (safe)
+      # Set to "true" only if cloudflared is in a trusted Docker network
       - SESSION_SECRET=${SESSION_SECRET}
       - VERIFIER_API_KEY=${VERIFIER_API_KEY}
       - PRIVATE_KEY_FLARE=${PRIVATE_KEY_FLARE}

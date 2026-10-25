@@ -13,10 +13,25 @@ export PRIVATE_KEY_FLARE="0x0000000000000000000000000000000000000000000000000000
 export START_API=true
 # Deliberately NOT setting PAYMENT_VERIFIER_ADDRESS_FLARE to test the warning path
 
-# Start the app in background
+# Create a FIFO to keep stdin open for MCP stdio server
+FIFO=$(mktemp -u)
+mkfifo "$FIFO"
+
+# Start the app with stdin from FIFO (keeps MCP server alive)
 echo "Starting app with production config (no verifier address)..."
-npx tsx src/index.ts &
+npx tsx src/index.ts < "$FIFO" &
 APP_PID=$!
+
+# Keep FIFO open by opening it for writing in background
+exec 3>"$FIFO"
+
+cleanup() {
+    exec 3>&-  # Close the FIFO write end
+    rm -f "$FIFO"
+    kill $APP_PID 2>/dev/null || true
+    wait $APP_PID 2>/dev/null || true
+}
+trap cleanup EXIT
 
 # Give it time to start (or crash)
 sleep 5
@@ -24,7 +39,6 @@ sleep 5
 # Check if process is still running
 if ! kill -0 $APP_PID 2>/dev/null; then
     echo "❌ SMOKE TEST FAILED: App crashed on startup"
-    wait $APP_PID
     exit 1
 fi
 
@@ -43,14 +57,8 @@ echo "Health response: $HEALTH_RESPONSE"
 # Verify the response contains expected fields
 if echo "$HEALTH_RESPONSE" | grep -q '"status":"ok"'; then
     echo "✅ SMOKE TEST PASSED: App boots and /health responds"
+    exit 0
 else
     echo "❌ SMOKE TEST FAILED: /health response unexpected"
-    kill $APP_PID 2>/dev/null || true
     exit 1
 fi
-
-# Cleanup
-kill $APP_PID 2>/dev/null || true
-wait $APP_PID 2>/dev/null || true
-
-exit 0
