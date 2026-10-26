@@ -357,22 +357,36 @@ router.get("/docs", (_req: Request, res: Response) => {
 <div class="endpoint"><span class="method get">GET</span><span class="path">/billing/portal</span><span class="badge auth" style="margin-left:0.5rem">bearer token</span><div class="desc">Get a link to manage or cancel your subscription.</div></div>
 
 <h2 id="mcp">MCP Server</h2>
-<p>XRPLink exposes an MCP server so AI agents can verify payments directly. Connect via stdio or the HTTP endpoint.</p>
+<p>XRPLink exposes an MCP server so AI agents can verify payments directly. Connect via stdio (local) or Streamable HTTP (remote).</p>
+
+<h3>Remote HTTP Endpoint</h3>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/mcp</span><span class="badge api-key" style="margin-left:0.5rem">API key (for attestations)</span><div class="desc">Streamable HTTP transport. Include X-API-Key header for verify_xrp_payment.</div></div>
 
 <table>
-<tr><th>Tool</th><th>Description</th></tr>
-<tr><td><code>verify_xrp_payment</code></td><td>Submit a txHash for attestation</td></tr>
-<tr><td><code>get_attestation_status</code></td><td>Check attestation by UUID</td></tr>
-<tr><td><code>lookup_attestation_by_tx</code></td><td>Find attestation by txHash</td></tr>
-<tr><td><code>get_attestation_by_round</code></td><td>List attestations by round ID</td></tr>
-<tr><td><code>get_server_info</code></td><td>Server, network, and contract info</td></tr>
+<tr><th>Tool</th><th>Auth</th><th>Description</th></tr>
+<tr><td><code>verify_xrp_payment</code></td><td><span class="badge api-key">API key</span></td><td>Submit a txHash for attestation (costs FLR, counts against quota)</td></tr>
+<tr><td><code>get_attestation_status</code></td><td><span class="badge pub">keyless</span></td><td>Check attestation by UUID</td></tr>
+<tr><td><code>lookup_attestation_by_tx</code></td><td><span class="badge pub">keyless</span></td><td>Find attestation by txHash</td></tr>
+<tr><td><code>get_attestation_by_round</code></td><td><span class="badge pub">keyless</span></td><td>List attestations by round ID</td></tr>
+<tr><td><code>get_server_info</code></td><td><span class="badge pub">keyless</span></td><td>Server, network, and contract info</td></tr>
 </table>
 
-<pre><code># stdio transport (local agents)
-npm run start:mcp
+<pre><code># Initialize MCP session and list tools
+curl -X POST https://xrp-link.com/mcp \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: sk_live_..." \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 
-# HTTP/SSE endpoint
-curl https://xrp-link.com/mcp</code></pre>
+# stdio transport (local agents using operator's wallet)
+npm run start:mcp</code></pre>
+
+<h3>Agent Discovery</h3>
+<p>For automated discovery, XRPLink provides:</p>
+<ul style="margin-left:1rem;font-size:0.9rem;color:#94a3b8">
+<li><code><a href="/llms.txt" style="color:#818cf8">/llms.txt</a></code> — Agent-oriented summary</li>
+<li><code><a href="/openapi.json" style="color:#818cf8">/openapi.json</a></code> — OpenAPI 3.0 spec</li>
+<li><code><a href="/.well-known/mcp.json" style="color:#818cf8">/.well-known/mcp.json</a></code> — MCP server metadata</li>
+</ul>
 
 <h2 id="errors">Errors</h2>
 <p>Errors are returned as JSON with a machine-readable <code>code</code> and a human-readable <code>message</code>:</p>
@@ -383,17 +397,18 @@ curl https://xrp-link.com/mcp</code></pre>
 }</code></pre>
 
 <table>
-<tr><th>Code</th><th>Meaning</th></tr>
-<tr><td><code>MISSING_API_KEY</code></td><td>X-API-Key header missing</td></tr>
-<tr><td><code>INVALID_API_KEY</code></td><td>API key invalid or deactivated</td></tr>
-<tr><td><code>RATE_LIMITED</code></td><td>Per-minute limit exceeded for your tier</td></tr>
-<tr><td><code>INVALID_TX_HASH</code></td><td>Not a valid 64-hex transaction hash</td></tr>
-<tr><td><code>SUBMIT_FAILED</code></td><td>Attestation submission to FdcHub failed</td></tr>
-<tr><td><code>NOT_FOUND</code></td><td>Resource not found</td></tr>
-<tr><td><code>FORBIDDEN</code></td><td>Requires a higher plan tier</td></tr>
-<tr><td><code>AUTH_FAILED</code></td><td>Invalid email/password</td></tr>
-<tr><td><code>MISSING_AUTH</code></td><td>Bearer token missing</td></tr>
-<tr><td><code>INVALID_AUTH</code></td><td>Bearer token invalid or expired</td></tr>
+<tr><th>Code</th><th>HTTP</th><th>Meaning</th></tr>
+<tr><td><code>MISSING_API_KEY</code></td><td>401</td><td>X-API-Key header missing</td></tr>
+<tr><td><code>INVALID_API_KEY</code></td><td>403</td><td>API key invalid or deactivated</td></tr>
+<tr><td><code>QUOTA_EXCEEDED</code></td><td>402</td><td>Monthly attestation limit reached (includes reset date)</td></tr>
+<tr><td><code>RATE_LIMITED</code></td><td>429</td><td>Per-minute limit exceeded for your tier</td></tr>
+<tr><td><code>INVALID_TX_HASH</code></td><td>400</td><td>Not a valid 64-hex transaction hash</td></tr>
+<tr><td><code>SUBMIT_FAILED</code></td><td>500</td><td>Attestation submission to FdcHub failed</td></tr>
+<tr><td><code>NOT_FOUND</code></td><td>404</td><td>Resource not found</td></tr>
+<tr><td><code>FORBIDDEN</code></td><td>403</td><td>Requires a higher plan tier</td></tr>
+<tr><td><code>AUTH_FAILED</code></td><td>401</td><td>Invalid email/password</td></tr>
+<tr><td><code>MISSING_AUTH</code></td><td>401</td><td>Bearer token missing</td></tr>
+<tr><td><code>INVALID_AUTH</code></td><td>401</td><td>Bearer token invalid or expired</td></tr>
 </table>
 
 </div>
@@ -526,6 +541,349 @@ router.get("/health", async (_req: Request, res: Response) => {
     fdcHub: activeNetwork.fdcHub,
     uptime: process.uptime(),
     storage: storeHealth,
+  });
+});
+
+// --- Agent Discovery Files ---
+
+router.get("/llms.txt", (_req: Request, res: Response) => {
+  const wl = whiteLabel.get();
+  const baseUrl = `https://${wl.companyUrl.replace(/^https?:\/\//, "")}`;
+  
+  res.type("text/plain").send(`# XRPLink - XRP Payment Attestation Service
+
+> Cryptographically verified XRP payment receipts on the Flare Network
+
+## What XRPLink Does
+
+XRPLink verifies XRP transactions using Flare's Data Connector (FDC) protocol, producing on-chain cryptographic proofs that a payment occurred. Each verified receipt can be independently validated by anyone.
+
+## API Base URL
+
+${baseUrl}
+
+## Authentication
+
+- **API Key**: Include \`X-API-Key: sk_live_...\` header for attestation endpoints
+- **Bearer Token**: Use \`Authorization: Bearer <token>\` for account/billing endpoints
+- Get an API key at ${baseUrl}/dashboard
+
+## REST Endpoints
+
+### Attestation (requires API key)
+- POST /api/v1/verify/xrp-payment - Submit txHash for attestation
+- GET /api/v1/status/:id - Check attestation status by UUID
+- GET /api/v1/status-by-tx/:txHash - Find attestation by txHash
+
+### Public
+- GET /receipt/:txHash - View receipt (HTML or JSON with Accept header)
+- GET /health - Server health check
+
+## MCP Server
+
+${baseUrl}/mcp
+
+Connect via Streamable HTTP transport (POST for requests, GET for SSE).
+
+### Tools
+- verify_xrp_payment(txHash) - Create attestation (requires X-API-Key)
+- get_attestation_status(id) - Check status (keyless)
+- lookup_attestation_by_tx(txHash) - Find by txHash (keyless)
+- get_attestation_by_round(roundId) - List by FDC round (keyless)
+- get_server_info() - Server/network info (keyless)
+
+## Tiers & Limits (Mainnet)
+
+| Tier | Price | Monthly Attestations |
+|------|-------|---------------------|
+| Free | $0 | 0 (lookup only) |
+| Paid | $29/mo | 5 |
+| Pro | $99/mo | 25 |
+
+Testnet (Coston2) has no limits.
+
+## Response Time
+
+- Attestation submission: Immediate
+- Proof ready: ~90-180 seconds (FDC voting round)
+- On-chain verification: ~30 seconds after proof
+
+## Links
+
+- API Docs: ${baseUrl}/docs
+- OpenAPI Spec: ${baseUrl}/openapi.json
+- Dashboard: ${baseUrl}/dashboard
+`);
+});
+
+router.get("/openapi.json", (_req: Request, res: Response) => {
+  const wl = whiteLabel.get();
+  const baseUrl = `https://${wl.companyUrl.replace(/^https?:\/\//, "")}`;
+  
+  const spec = {
+    openapi: "3.0.3",
+    info: {
+      title: "XRPLink API",
+      version: "0.3.0",
+      description: "Cryptographically verified XRP payment receipts on the Flare Network. XRPLink uses Flare's Data Connector (FDC) protocol to create on-chain proofs of XRP transactions.",
+      contact: { url: baseUrl },
+    },
+    servers: [{ url: baseUrl, description: "Production" }],
+    tags: [
+      { name: "Attestation", description: "Create and check payment attestations" },
+      { name: "Public", description: "Public endpoints (no auth required)" },
+      { name: "Auth", description: "Authentication and account management" },
+      { name: "Billing", description: "Subscription management" },
+      { name: "MCP", description: "Model Context Protocol server" },
+    ],
+    paths: {
+      "/api/v1/verify/xrp-payment": {
+        post: {
+          tags: ["Attestation"],
+          summary: "Verify an XRP payment",
+          description: "Submit an XRP transaction hash for FDC attestation. Returns immediately with an attestation ID; proof takes ~90-180 seconds.",
+          security: [{ ApiKeyAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["txHash"],
+                  properties: {
+                    txHash: { type: "string", pattern: "^[0-9A-Fa-f]{64}$", description: "64-character XRP transaction hash" },
+                  },
+                },
+                example: { txHash: "87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F" },
+              },
+            },
+          },
+          responses: {
+            "202": {
+              description: "Attestation submitted",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/VerifyResponse" } } },
+            },
+            "400": { description: "Invalid transaction hash", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+            "401": { description: "Missing API key", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+            "402": { description: "Quota exceeded", content: { "application/json": { schema: { $ref: "#/components/schemas/QuotaError" } } } },
+            "403": { description: "Invalid API key", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          },
+        },
+      },
+      "/api/v1/status/{id}": {
+        get: {
+          tags: ["Attestation"],
+          summary: "Check attestation status",
+          description: "Get the current status and proof data for an attestation by UUID.",
+          security: [{ ApiKeyAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: {
+            "200": { description: "Attestation found", content: { "application/json": { schema: { $ref: "#/components/schemas/StatusResponse" } } } },
+            "404": { description: "Attestation not found" },
+          },
+        },
+      },
+      "/api/v1/status-by-tx/{txHash}": {
+        get: {
+          tags: ["Attestation"],
+          summary: "Find attestation by transaction hash",
+          security: [{ ApiKeyAuth: [] }],
+          parameters: [{ name: "txHash", in: "path", required: true, schema: { type: "string", pattern: "^[0-9A-Fa-f]{64}$" } }],
+          responses: {
+            "200": { description: "Attestation found", content: { "application/json": { schema: { $ref: "#/components/schemas/StatusResponse" } } } },
+            "404": { description: "Attestation not found" },
+          },
+        },
+      },
+      "/receipt/{txHash}": {
+        get: {
+          tags: ["Public"],
+          summary: "View receipt",
+          description: "Get a payment receipt by transaction hash. Returns HTML by default; use Accept: application/json or ?format=json for JSON.",
+          parameters: [
+            { name: "txHash", in: "path", required: true, schema: { type: "string" } },
+            { name: "format", in: "query", schema: { type: "string", enum: ["json"] }, description: "Response format" },
+          ],
+          responses: {
+            "200": {
+              description: "Receipt found",
+              content: {
+                "text/html": { schema: { type: "string" } },
+                "application/json": { schema: { $ref: "#/components/schemas/ReceiptResponse" } },
+              },
+            },
+            "404": { description: "Transaction not found" },
+          },
+        },
+      },
+      "/health": {
+        get: {
+          tags: ["Public"],
+          summary: "Health check",
+          responses: { "200": { description: "Server is healthy" }, "503": { description: "Server is degraded" } },
+        },
+      },
+      "/mcp": {
+        post: {
+          tags: ["MCP"],
+          summary: "MCP Streamable HTTP endpoint",
+          description: "Model Context Protocol server endpoint. Supports tools, resources, and prompts for AI agent integration.",
+          parameters: [{ name: "X-API-Key", in: "header", schema: { type: "string" }, description: "API key for attestation tools" }],
+          requestBody: { content: { "application/json": { schema: { type: "object" } } } },
+          responses: { "200": { description: "MCP response" } },
+        },
+        get: {
+          tags: ["MCP"],
+          summary: "MCP SSE stream",
+          description: "Server-sent events stream for MCP notifications.",
+          responses: { "200": { description: "SSE stream" } },
+        },
+      },
+      "/auth/signup": {
+        post: {
+          tags: ["Auth"],
+          summary: "Create account",
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: { type: "object", required: ["email", "password"], properties: { email: { type: "string", format: "email" }, password: { type: "string", minLength: 8 } } },
+              },
+            },
+          },
+          responses: { "201": { description: "Account created" }, "400": { description: "Invalid input" } },
+        },
+      },
+      "/auth/login": {
+        post: {
+          tags: ["Auth"],
+          summary: "Log in",
+          requestBody: {
+            content: { "application/json": { schema: { type: "object", required: ["email", "password"], properties: { email: { type: "string" }, password: { type: "string" } } } } },
+          },
+          responses: { "200": { description: "Login successful" }, "401": { description: "Invalid credentials" } },
+        },
+      },
+      "/me": {
+        get: {
+          tags: ["Auth"],
+          summary: "Get current user",
+          security: [{ BearerAuth: [] }],
+          responses: { "200": { description: "User info" }, "401": { description: "Not authenticated" } },
+        },
+      },
+      "/billing/subscribe": {
+        post: {
+          tags: ["Billing"],
+          summary: "Start subscription",
+          security: [{ BearerAuth: [] }],
+          requestBody: {
+            content: { "application/json": { schema: { type: "object", required: ["tier"], properties: { tier: { type: "string", enum: ["paid", "pro"] } } } } },
+          },
+          responses: { "200": { description: "Checkout URL returned" } },
+        },
+      },
+    },
+    components: {
+      securitySchemes: {
+        ApiKeyAuth: { type: "apiKey", in: "header", name: "X-API-Key" },
+        BearerAuth: { type: "http", scheme: "bearer" },
+      },
+      schemas: {
+        VerifyResponse: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            txHash: { type: "string" },
+            roundId: { type: "integer", nullable: true },
+            status: { type: "string", enum: ["pending", "ready", "verified", "failed", "not_found"] },
+          },
+        },
+        StatusResponse: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            txHash: { type: "string" },
+            roundId: { type: "integer", nullable: true },
+            status: { type: "string" },
+            proof: { type: "object", nullable: true },
+            verifiedTxHash: { type: "string", nullable: true },
+            error: { type: "string", nullable: true },
+          },
+        },
+        ReceiptResponse: {
+          type: "object",
+          properties: {
+            txHash: { type: "string" },
+            status: { type: "string" },
+            attestationId: { type: "string", nullable: true },
+            roundId: { type: "integer", nullable: true },
+            payment: { type: "object", nullable: true },
+            proof: { type: "object", nullable: true },
+          },
+        },
+        Error: {
+          type: "object",
+          properties: { error: { type: "string" }, code: { type: "string" }, message: { type: "string" } },
+        },
+        QuotaError: {
+          type: "object",
+          properties: {
+            code: { type: "string", example: "QUOTA_EXCEEDED" },
+            message: { type: "string" },
+            tier: { type: "string" },
+            limit: { type: "integer" },
+            used: { type: "integer" },
+            resetDate: { type: "string", format: "date" },
+            upgradeUrl: { type: "string" },
+          },
+        },
+      },
+    },
+  };
+  
+  res.json(spec);
+});
+
+// .well-known endpoints for agent discovery
+router.get("/.well-known/mcp.json", (_req: Request, res: Response) => {
+  const wl = whiteLabel.get();
+  const baseUrl = `https://${wl.companyUrl.replace(/^https?:\/\//, "")}`;
+  
+  res.json({
+    name: "XRPLink",
+    description: "Cryptographically verified XRP payment receipts on the Flare Network",
+    url: `${baseUrl}/mcp`,
+    transport: "streamable-http",
+    version: "0.3.0",
+    capabilities: {
+      tools: true,
+      resources: true,
+      prompts: true,
+    },
+    authentication: {
+      type: "api-key",
+      header: "X-API-Key",
+      required_for: ["verify_xrp_payment"],
+      optional_for: ["get_attestation_status", "lookup_attestation_by_tx", "get_attestation_by_round", "get_server_info"],
+    },
+  });
+});
+
+router.get("/.well-known/ai-plugin.json", (_req: Request, res: Response) => {
+  const wl = whiteLabel.get();
+  const baseUrl = `https://${wl.companyUrl.replace(/^https?:\/\//, "")}`;
+  
+  res.json({
+    schema_version: "v1",
+    name_for_human: "XRPLink",
+    name_for_model: "xrplink",
+    description_for_human: "Verify XRP payments and generate cryptographic receipts on the Flare Network.",
+    description_for_model: "XRPLink verifies XRP transactions using Flare's FDC protocol. Use verify_xrp_payment to create attestations (requires API key), get_attestation_status to check progress, lookup_attestation_by_tx to find existing attestations. Proofs take ~90 seconds.",
+    auth: { type: "user_http", authorization_type: "bearer" },
+    api: { type: "openapi", url: `${baseUrl}/openapi.json` },
+    logo_url: `${baseUrl}/logo.png`,
+    contact_email: "support@xrp-link.com",
+    legal_info_url: `${baseUrl}/terms`,
   });
 });
 
@@ -825,37 +1183,12 @@ loadDashboard();
 </body></html>`);
 });
 
-// --- MCP Protocol over HTTP (SSE transport for remote agents) ---
+// --- MCP Protocol over HTTP (Streamable HTTP transport for remote agents) ---
+import { handleMcpRequest, getMcpSessionCount } from "./mcp/http-server.js";
 
-// In-memory SSE session
-let sseClients: Response[] = [];
-
-router.get("/mcp", (req: Request, res: Response) => {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  res.write("event: endpoint\ndata: /mcp\n\n");
-  sseClients.push(res);
-  req.on("close", () => {
-    sseClients = sseClients.filter((c) => c !== res);
-  });
-});
-
-router.post("/mcp", expressJsonWithRaw, async (req: Request, res: Response) => {
-  // Accept JSON-RPC messages from MCP clients and relay to SSE clients
-  // For now, log received messages - full MCP-over-SSE routing requires
-  // the MCP SDK's SSE transport which we'll wire up in a future step.
-  const msg = req.body;
-  console.log("MCP message received:", JSON.stringify(msg).slice(0, 200));
-  res.status(202).json({ status: "received" });
-});
-
-function expressJsonWithRaw(req: Request, res: Response, next: express.NextFunction) {
-  express.json()(req, res, next);
-}
+router.get("/mcp", handleMcpRequest);
+router.post("/mcp", handleMcpRequest);
+router.delete("/mcp", handleMcpRequest);
 
 // --- Public Receipt Page ---
 
@@ -938,6 +1271,69 @@ router.get("/receipt/:txHash", async (req: Request, res: Response) => {
   const wl = whiteLabel.get();
 
   const shareUrl = `https://${wl.companyUrl.replace(/^https?:\/\//, "")}/receipt/${txHash}`;
+
+  // Content negotiation: JSON via Accept header or ?format=json query param
+  const wantsJson = req.query.format === "json" || req.accepts(["html", "json"]) === "json";
+
+  if (wantsJson) {
+    if (attestation) {
+      const rb = attestation.proof?.response?.responseBody;
+      const memoHex = rb?.firstMemoData || "";
+      const memoStr = memoHex.startsWith("0x") ? Buffer.from(memoHex.slice(2), "hex").toString("utf8").replace(/\0+$/, "") : "";
+
+      return res.json({
+        txHash,
+        status: attestation.status,
+        attestationId: attestation.id,
+        roundId: attestation.roundId,
+        verifiedTxHash: attestation.verifiedTxHash,
+        createdAt: attestation.createdAt,
+        payment: rb ? {
+          sourceAddress: rb.sourceAddress,
+          receivedAmount: rb.receivedAmount,
+          amountFormatted: formatXrpAmount(rb.receivedAmount),
+          status: rb.status === "0" ? "success" : `failed (${rb.status})`,
+          memo: rb.hasMemoData && memoStr ? memoStr : null,
+          destinationTag: rb.hasDestinationTag && rb.destinationTag !== "0" ? rb.destinationTag : null,
+          blockNumber: rb.blockNumber,
+          blockTimestamp: rb.blockTimestamp,
+        } : null,
+        proof: attestation.proof ? {
+          votingRound: attestation.proof.response?.votingRound,
+          merkleProofLength: attestation.proof.proof?.length || 0,
+        } : null,
+        contract: config.paymentVerifierAddress || null,
+        shareUrl,
+      });
+    }
+
+    // No attestation - check XRPL
+    const txData = await fetchXrplTx(txHash);
+    if (!txData) {
+      return res.status(404).json({ error: "NOT_FOUND", message: "Transaction not found on XRP Ledger", txHash });
+    }
+
+    const memoData = txData.Memos?.[0]?.Memo?.MemoData || "";
+    const memoStr = memoData ? Buffer.from(memoData, "hex").toString("utf8").replace(/\0+$/, "") : "";
+
+    return res.json({
+      txHash,
+      status: "not_attested",
+      attestationId: null,
+      payment: {
+        sourceAddress: txData.Account,
+        destinationAddress: txData.Destination,
+        amount: txData.Amount,
+        amountFormatted: txData.Amount ? formatXrpAmount(txData.Amount) : null,
+        fee: txData.Fee,
+        memo: memoStr || null,
+        destinationTag: txData.DestinationTag || null,
+        date: txData.date ? formatTimestamp(txData.date) : null,
+        transactionResult: txData.meta?.TransactionResult || null,
+      },
+      message: "Transaction exists on XRP Ledger but has not been attested. Use POST /api/v1/verify/xrp-payment with an API key to create a verified receipt.",
+    });
+  }
 
   if (attestation && (attestation.status === "verified" || attestation.status === "ready" || attestation.status === "pending")) {
     const p = attestation.proof?.response;
@@ -1369,7 +1765,6 @@ async function pollForProof(id: string, roundId: number, abiEncoded: string, att
       const verifiedTxHash = await fdc.verifyProofOnChain(proofData, config.paymentVerifierAddress);
       await store.updateAttestation(id, { verifiedTxHash, status: "verified" });
       console.log(`Attestation ${id}: verified on-chain (${verifiedTxHash})`);
-      notifySseClients({ event: "attestation.completed", id, status: "verified", verifiedTxHash });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Attestation ${id}: on-chain verification failed:`, message);
@@ -1378,13 +1773,6 @@ async function pollForProof(id: string, roundId: number, abiEncoded: string, att
   }
 
   await deliverWebhooks(id);
-}
-
-function notifySseClients(data: Record<string, unknown>) {
-  const msg = `data: ${JSON.stringify(data)}\n\n`;
-  for (const client of sseClients) {
-    client.write(msg);
-  }
 }
 
 function sleep(ms: number): Promise<void> {
