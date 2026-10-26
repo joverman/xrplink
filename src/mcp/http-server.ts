@@ -268,21 +268,26 @@ export async function handleMcpRequest(req: Request, res: Response) {
   let transport: StreamableHTTPServerTransport;
 
   if (sessionId && transports.has(sessionId)) {
+    // Reuse existing session
     transport = transports.get(sessionId)!;
   } else if (req.method === "POST" && !sessionId) {
+    // New session - create transport with session ID generator
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
     });
     const server = createMcpServer();
     await server.connect(transport);
-    const newSessionId = transport.sessionId;
-    if (newSessionId) {
-      transports.set(newSessionId, transport);
-      transport.onclose = () => {
-        transports.delete(newSessionId);
-      };
+  } else if (req.method === "DELETE" && sessionId) {
+    // Session termination
+    const existingTransport = transports.get(sessionId);
+    if (existingTransport) {
+      await existingTransport.close();
+      transports.delete(sessionId);
     }
+    res.status(200).json({ status: "session closed" });
+    return;
   } else if (req.method === "GET") {
+    // Stateless GET for SSE notifications
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
@@ -296,6 +301,12 @@ export async function handleMcpRequest(req: Request, res: Response) {
   const nodeReq = req as unknown as IncomingMessage & { auth?: any };
   const nodeRes = res as unknown as ServerResponse;
   await transport.handleRequest(nodeReq, nodeRes, req.body);
+  
+  // After handleRequest, check if this created a new session and store it
+  const newSessionId = transport.sessionId;
+  if (newSessionId && !transports.has(newSessionId)) {
+    transports.set(newSessionId, transport);
+  }
 }
 
 export function getMcpSessionCount(): number {
