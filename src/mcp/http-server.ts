@@ -86,10 +86,14 @@ async function handleVerifyXrpPaymentWithAuth(args: Record<string, unknown>) {
             limit: result.body.limit,
             used: result.body.used,
             resetDate: result.body.resetDate,
+            upgradeUrl: result.body.upgradeUrl,
           },
           null,
           2
         ),
+        result.body.limit !== undefined ? `\nLimit: ${result.body.limit}` : "",
+        result.body.used !== undefined ? `Used: ${result.body.used}` : "",
+        result.body.resetDate ? `Reset: ${result.body.resetDate}` : "",
       ].join("\n")
     );
   }

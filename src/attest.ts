@@ -305,11 +305,7 @@ export async function attestXrpPayment(opts: {
       if (!quotaCheck.allowed) {
         const quotaError = buildQuotaExceededError(quotaCheck);
         if (isX402Configured()) {
-          return paymentRequiredResult(
-            cleanHash,
-            `${quotaError.message} Alternatively pay per attestation with x402.`,
-            quotaError
-          );
+          return paymentRequiredResult(cleanHash, quotaError.message, quotaError);
         }
         return { kind: "error", httpStatus: 402, body: quotaError };
       }

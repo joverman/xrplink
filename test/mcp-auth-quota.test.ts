@@ -178,7 +178,7 @@ describe("MCP verify_xrp_payment Safety-Critical Auth/Quota Tests", () => {
     const freeKey = await store.createApiKey("test-free-tier", "free");
     testFreeKey = freeKey.key;
     
-    // Paid tier key (limit = 5, fresh)
+    // Paid tier key (default limit = 20, fresh)
     const paidKey = await store.createApiKey("test-paid-tier", "paid");
     testPaidKey = paidKey.key;
     
@@ -186,12 +186,11 @@ describe("MCP verify_xrp_payment Safety-Critical Auth/Quota Tests", () => {
     const paidKeyOverQuota = await store.createApiKey("test-paid-over-quota", "paid");
     testPaidKeyOverQuota = paidKeyOverQuota.key;
     
-    // Simulate this key being at quota by incrementing usage 5 times
-    const { getFallbackBillingPeriod, getBillingPeriodKey } = await import("../src/attestation-quota.js");
+    const { getFallbackBillingPeriod, getBillingPeriodKey, ATTESTATION_LIMITS } = await import("../src/attestation-quota.js");
     const period = getFallbackBillingPeriod(new Date().toISOString());
     const periodKey = getBillingPeriodKey(period);
     
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < ATTESTATION_LIMITS.paid; i++) {
       await store.incrementAttestationUsage(testPaidKeyOverQuota, periodKey);
     }
     
