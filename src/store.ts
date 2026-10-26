@@ -3,7 +3,6 @@ import { join, dirname } from "path";
 import { tmpdir } from "os";
 import { v4 as uuid } from "uuid";
 import { Attestation, AttestationStatus, ApiKey, Tier, Webhook } from "./types.js";
-import { getCurrentMonthKey } from "./attestation-quota.js";
 
 const DATA_DIR = process.env.DATA_DIR || "data";
 const ATTESTATIONS_PATH = join(DATA_DIR, "attestations.json");
@@ -43,10 +42,10 @@ interface Store {
   getWebhook(id: string): Promise<Webhook | undefined>;
   removeWebhook(id: string): Promise<boolean>;
   getHealth(): StoreHealth;
-  /** Get monthly attestation count for an API key in the current billing month */
-  getAttestationUsage(apiKey: string): Promise<number>;
-  /** Increment monthly attestation count for an API key */
-  incrementAttestationUsage(apiKey: string): Promise<number>;
+  /** Get attestation count for an API key in a specific billing period */
+  getAttestationUsage(apiKey: string, periodKey: string): Promise<number>;
+  /** Increment attestation count for an API key in a specific billing period */
+  incrementAttestationUsage(apiKey: string, periodKey: string): Promise<number>;
 }
 
 function atomicWriteFileSync(path: string, data: string): void {
@@ -229,15 +228,13 @@ class JsonFileStore implements Store {
     return exists;
   }
 
-  async getAttestationUsage(apiKey: string): Promise<number> {
-    const monthKey = getCurrentMonthKey();
-    const usageKey = `${apiKey}:${monthKey}`;
+  async getAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
+    const usageKey = `${apiKey}:${periodKey}`;
     return this.data.attestationUsage[usageKey] || 0;
   }
 
-  async incrementAttestationUsage(apiKey: string): Promise<number> {
-    const monthKey = getCurrentMonthKey();
-    const usageKey = `${apiKey}:${monthKey}`;
+  async incrementAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
+    const usageKey = `${apiKey}:${periodKey}`;
     const current = this.data.attestationUsage[usageKey] || 0;
     this.data.attestationUsage[usageKey] = current + 1;
     this.syncPersist();
@@ -505,24 +502,22 @@ class PostgresStore implements Store {
     return result.rowCount > 0;
   }
 
-  async getAttestationUsage(apiKey: string): Promise<number> {
-    const monthKey = getCurrentMonthKey();
+  async getAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
     const result = await this.pool.query(
       `SELECT usage_count FROM attestation_usage WHERE api_key = $1 AND month_key = $2`,
-      [apiKey, monthKey]
+      [apiKey, periodKey]
     );
     return result.rows[0]?.usage_count || 0;
   }
 
-  async incrementAttestationUsage(apiKey: string): Promise<number> {
-    const monthKey = getCurrentMonthKey();
+  async incrementAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
     const result = await this.pool.query(
       `INSERT INTO attestation_usage (api_key, month_key, usage_count)
        VALUES ($1, $2, 1)
        ON CONFLICT (api_key, month_key)
        DO UPDATE SET usage_count = attestation_usage.usage_count + 1
        RETURNING usage_count`,
-      [apiKey, monthKey]
+      [apiKey, periodKey]
     );
     return result.rows[0].usage_count;
   }

@@ -13,7 +13,15 @@ import {
   AttestationStatus, VerifyResponse, StatusResponse,
   RegisterWebhookBody, ApiError, Tier,
 } from "./types.js";
-import { checkQuota, buildQuotaExceededError, ATTESTATION_LIMITS } from "./attestation-quota.js";
+import { 
+  checkQuota, 
+  buildQuotaExceededError, 
+  ATTESTATION_LIMITS, 
+  BillingPeriod,
+  getFallbackBillingPeriod,
+  getBillingPeriodKey,
+} from "./attestation-quota.js";
+import { userStore } from "./user-store.js";
 
 const router = Router();
 
@@ -1173,9 +1181,29 @@ router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, re
   // Check attestation quota BEFORE submitting to FDC (to avoid spending FLR)
   // Only check when on mainnet (FLARE_NETWORK=flare) - testnet is uncapped
   const isMainnet = config.network === "flare";
+  let billingPeriod: BillingPeriod | null = null;
+  
   if (isMainnet) {
-    const currentUsage = await store.getAttestationUsage(apiKey.key);
-    const quotaCheck = checkQuota(apiKey.tier, currentUsage);
+    // Find the user who owns this API key to get their billing period
+    const apiKeyOwner = userStore.findByApiKey(apiKey.key);
+    
+    if (apiKeyOwner && apiKeyOwner.billingPeriodStart && apiKeyOwner.billingPeriodEnd) {
+      // Use Stripe billing period
+      billingPeriod = {
+        start: apiKeyOwner.billingPeriodStart,
+        end: apiKeyOwner.billingPeriodEnd,
+      };
+    } else if (apiKeyOwner) {
+      // Fallback: use 30-day rolling period anchored to account creation
+      billingPeriod = getFallbackBillingPeriod(apiKeyOwner.createdAt);
+    } else {
+      // No owner found - use API key creation date as anchor (edge case)
+      billingPeriod = getFallbackBillingPeriod(apiKey.createdAt);
+    }
+    
+    const periodKey = getBillingPeriodKey(billingPeriod);
+    const currentUsage = await store.getAttestationUsage(apiKey.key, periodKey);
+    const quotaCheck = checkQuota(apiKey.tier, currentUsage, billingPeriod);
 
     if (!quotaCheck.allowed) {
       const error = buildQuotaExceededError(quotaCheck);
@@ -1194,8 +1222,9 @@ router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, re
     await store.updateAttestation(attestation.id, { roundId, status: "pending" });
 
     // Increment usage AFTER successful FDC submission (only on mainnet)
-    if (isMainnet) {
-      await store.incrementAttestationUsage(apiKey.key);
+    if (isMainnet && billingPeriod) {
+      const periodKey = getBillingPeriodKey(billingPeriod);
+      await store.incrementAttestationUsage(apiKey.key, periodKey);
     }
 
     console.log(`Attestation ${attestation.id}: submitted to round ${roundId} (tx: ${submitTxHash})`);
