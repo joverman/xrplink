@@ -8,7 +8,7 @@ import { formatError } from "./errors.js";
 export const tools: Tool[] = [
   {
     name: "verify_xrp_payment",
-    description: "Submit an XRP transaction hash for FDC attestation on Flare. Subscription API keys inside quota are not charged extra. Without a key, or over quota, the tool returns an x402 payment challenge (XRP or RLUSD via the XRPL facilitator). A valid PAYMENT-SIGNATURE pays for exactly one attestation. Status checks are free. Proof takes ~90-180 seconds; use get_attestation_status.",
+    description: "Submit an XRP transaction hash for FDC attestation on Flare. Subscription API keys inside quota are not charged extra (Paid: 20 mainnet attestations per billing period; Pro: 100). Without a key, or over quota, the tool returns an x402 payment challenge (RLUSD first, then XRP via the XRPL facilitator). Over-quota subscribers can upgrade or buy a single extra attestation. A valid PAYMENT-SIGNATURE pays for exactly one attestation. Status checks are free. Proof takes ~90-180 seconds; use get_attestation_status.",
     inputSchema: {
       type: "object",
       properties: {

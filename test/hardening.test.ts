@@ -386,12 +386,12 @@ describe("Billing Configuration", () => {
 });
 
 describe("Attestation Quota", () => {
-  it("should have default limits matching spec (free=0, paid=5, pro=25)", async () => {
+  it("should have default limits matching spec (free=0, paid=20, pro=100)", async () => {
     const { ATTESTATION_LIMITS } = await import("../src/attestation-quota.js");
     
     assert.equal(ATTESTATION_LIMITS.free, 0);
-    assert.equal(ATTESTATION_LIMITS.paid, 5);
-    assert.equal(ATTESTATION_LIMITS.pro, 25);
+    assert.equal(ATTESTATION_LIMITS.paid, 20);
+    assert.equal(ATTESTATION_LIMITS.pro, 100);
   });
 
   it("should generate billing period key from period start timestamp", async () => {
@@ -450,8 +450,8 @@ describe("Attestation Quota", () => {
     
     assert.equal(result.allowed, true);
     assert.equal(result.used, 3);
-    assert.equal(result.limit, 5);
-    assert.equal(result.remaining, 2);
+    assert.equal(result.limit, 20);
+    assert.equal(result.remaining, 17);
     assert.ok(result.periodKey);
   });
 
@@ -459,11 +459,11 @@ describe("Attestation Quota", () => {
     const { checkQuota } = await import("../src/attestation-quota.js");
     
     const period = { start: 1698796800, end: 1701388800 };
-    const result = checkQuota("paid", 5, period);
+    const result = checkQuota("paid", 20, period);
     
     assert.equal(result.allowed, false);
-    assert.equal(result.used, 5);
-    assert.equal(result.limit, 5);
+    assert.equal(result.used, 20);
+    assert.equal(result.limit, 20);
     assert.equal(result.remaining, 0);
   });
 
@@ -477,15 +477,15 @@ describe("Attestation Quota", () => {
     assert.equal(result.limit, 0);
   });
 
-  it("should allow up to 25 for pro tier", async () => {
+  it("should allow up to 100 for pro tier", async () => {
     const { checkQuota } = await import("../src/attestation-quota.js");
     
     const period = { start: 1698796800, end: 1701388800 };
     
-    const atLimit = checkQuota("pro", 24, period);
+    const atLimit = checkQuota("pro", 99, period);
     assert.equal(atLimit.allowed, true);
     
-    const overLimit = checkQuota("pro", 25, period);
+    const overLimit = checkQuota("pro", 100, period);
     assert.equal(overLimit.allowed, false);
   });
 
@@ -494,12 +494,14 @@ describe("Attestation Quota", () => {
     
     // Customer billing period ends on Nov 28, 2023
     const period = { start: 1698451200, end: 1701129600 }; // Oct 28 - Nov 28
-    const result = checkQuota("paid", 5, period);
+    const result = checkQuota("paid", 20, period);
     const error = buildQuotaExceededError(result);
     
     assert.equal(error.code, "QUOTA_EXCEEDED");
     assert.ok(error.message.includes("Paid"));
-    assert.ok(error.message.includes("5"));
+    assert.ok(error.message.includes("20"));
+    assert.ok(error.message.includes("Upgrade to Pro"), "Paid over-quota should prompt upgrade to Pro");
+    assert.ok(error.message.toLowerCase().includes("pay-per-use"), "Should mention buying an extra attestation");
     assert.equal(error.resetDate, formatResetDate(period.end));
     assert.ok(error.message.includes(error.resetDate), "Error message should include customer's reset date");
     assert.equal(error.upgradeUrl, "/pricing");
@@ -513,12 +515,12 @@ describe("Attestation Quota", () => {
     // User was on paid, used 3 attestations
     const beforeUpgrade = checkQuota("paid", 3, period);
     assert.equal(beforeUpgrade.allowed, true);
-    assert.equal(beforeUpgrade.remaining, 2); // 5 - 3 = 2
+    assert.equal(beforeUpgrade.remaining, 17); // 20 - 3 = 17
     
     // User upgrades to pro - same period, same usage count, but higher limit
     const afterUpgrade = checkQuota("pro", 3, period);
     assert.equal(afterUpgrade.allowed, true);
-    assert.equal(afterUpgrade.remaining, 22); // 25 - 3 = 22
+    assert.equal(afterUpgrade.remaining, 97); // 100 - 3 = 97
     assert.equal(afterUpgrade.limit, ATTESTATION_LIMITS.pro);
     
     // The new higher limit applies immediately

@@ -9,12 +9,22 @@
  */
 
 import crypto from "crypto";
-import { getAttestationPrice, isPriceFeedAvailable, AttestationPrice } from "./price-service.js";
+import { getAttestationPrice, isPriceFeedAvailable, readNumber, AttestationPrice } from "./price-service.js";
+import { recordX402Quote, recordX402Settlement } from "./x402-ledger.js";
 
 const DEFAULT_FACILITATOR = "https://xrpl-facilitator-mainnet.t54.ai";
 const RLUSD_HEX = "524C555344000000000000000000000000000000";
-const QUOTE_TTL_MS = 10 * 60 * 1000;
-const MAX_TIMEOUT_SECONDS = 600;
+/**
+ * Official Ripple USD issuers.
+ * Mainnet: https://docs.ripple.com/products/stablecoin/overview/token-addresses
+ * Testnet: https://docs.ripple.com/products/stablecoin/developer-resources/rlusd-on-the-xrpl
+ * The pay-to wallet must already hold an RLUSD trust line to the issuer in use.
+ */
+export const DEFAULT_RLUSD_ISSUER = "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De";
+export const DEFAULT_RLUSD_ISSUER_TESTNET = "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV";
+const DEFAULT_QUOTE_TTL_MS = 120_000;
+/** t54 XRPL exact scheme default SourceTag. */
+const XRPL_SOURCE_TAG = 804681468;
 
 /** Classic XRPL address (no secrets — validation only). */
 const XRPL_ADDRESS_RE = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
@@ -26,14 +36,15 @@ export interface X402PaymentRequirements {
   payTo: string;
   amount: string;
   maxTimeoutSeconds: number;
-  extra: {
-    areFeesSponsored: false;
-    assetTransferMethod: "sequence";
-    invoiceId: string;
-    issuer?: string;
-    resource: string;
-    txHash: string;
-  };
+    extra: {
+      areFeesSponsored: false;
+      assetTransferMethod: "sequence";
+      invoiceId: string;
+      sourceTag: number;
+      issuer?: string;
+      resource: string;
+      txHash: string;
+    };
 }
 
 export interface X402PaymentRequired {
@@ -90,6 +101,15 @@ function xrplNetwork(): string {
   return process.env.XRPL_NETWORK || "xrpl:0";
 }
 
+export function isXrplTestnet(network = xrplNetwork()): boolean {
+  const n = network.toLowerCase();
+  return n === "xrpl:1" || n === "testnet" || n.includes("testnet") || n === "xrpl-testnet";
+}
+
+export function defaultRlusdIssuer(network = xrplNetwork()): string {
+  return isXrplTestnet(network) ? DEFAULT_RLUSD_ISSUER_TESTNET : DEFAULT_RLUSD_ISSUER;
+}
+
 export function getPayToAddress(): string {
   const addr = (process.env.X402_PAY_TO_ADDRESS || "").trim();
   if (!addr || !XRPL_ADDRESS_RE.test(addr)) return "";
@@ -101,7 +121,15 @@ export function isX402Enabled(): boolean {
 }
 
 function rlusdIssuer(): string {
-  return (process.env.X402_RLUSD_ISSUER || "").trim();
+  return (process.env.X402_RLUSD_ISSUER || defaultRlusdIssuer()).trim();
+}
+
+export function getQuoteTtlMs(): number {
+  return readNumber("X402_QUOTE_TTL_MS", DEFAULT_QUOTE_TTL_MS);
+}
+
+function maxTimeoutSeconds(): number {
+  return Math.max(1, Math.ceil(getQuoteTtlMs() / 1000));
 }
 
 export function generateInvoiceId(txHash: string): string {
@@ -115,8 +143,9 @@ export function payloadFingerprint(paymentSignature: string): string {
 
 function pruneQuotes(): void {
   const now = Date.now();
+  const ttl = getQuoteTtlMs();
   for (const [id, q] of quotes) {
-    if (now - q.createdAt > QUOTE_TTL_MS) quotes.delete(id);
+    if (now - q.createdAt > ttl) quotes.delete(id);
   }
 }
 
@@ -151,24 +180,9 @@ export async function buildPaymentRequired(txHash: string): Promise<{
   const price = await getAttestationPrice();
   const invoiceId = generateInvoiceId(txHash);
   const network = xrplNetwork();
+  const timeout = maxTimeoutSeconds();
 
-  const xrpReq: X402PaymentRequirements = {
-    scheme: "exact",
-    network,
-    asset: "XRP",
-    payTo,
-    amount: price.xrpDrops,
-    maxTimeoutSeconds: MAX_TIMEOUT_SECONDS,
-    extra: {
-      areFeesSponsored: false,
-      assetTransferMethod: "sequence",
-      invoiceId,
-      resource: "/api/v1/verify/xrp-payment",
-      txHash,
-    },
-  };
-
-  const accepts: X402PaymentRequirements[] = [xrpReq];
+  const accepts: X402PaymentRequirements[] = [];
   const issuer = rlusdIssuer();
   if (issuer && XRPL_ADDRESS_RE.test(issuer)) {
     accepts.push({
@@ -177,11 +191,12 @@ export async function buildPaymentRequired(txHash: string): Promise<{
       asset: RLUSD_HEX,
       payTo,
       amount: price.rlusd,
-      maxTimeoutSeconds: MAX_TIMEOUT_SECONDS,
+      maxTimeoutSeconds: timeout,
       extra: {
         areFeesSponsored: false,
         assetTransferMethod: "sequence",
         invoiceId,
+        sourceTag: XRPL_SOURCE_TAG,
         issuer,
         resource: "/api/v1/verify/xrp-payment",
         txHash,
@@ -189,9 +204,26 @@ export async function buildPaymentRequired(txHash: string): Promise<{
     });
   }
 
+  accepts.push({
+    scheme: "exact",
+    network,
+    asset: "XRP",
+    payTo,
+    amount: price.xrpDrops,
+    maxTimeoutSeconds: timeout,
+    extra: {
+      areFeesSponsored: false,
+      assetTransferMethod: "sequence",
+      invoiceId,
+      sourceTag: XRPL_SOURCE_TAG,
+      resource: "/api/v1/verify/xrp-payment",
+      txHash,
+    },
+  });
+
   const paymentRequired: X402PaymentRequired = {
     x402Version: 2,
-    error: `Payment of $${price.usd.toFixed(2)} USD required for one XRP payment attestation`,
+    error: `Payment of $${price.usd.toFixed(2)} USD required for one XRP payment attestation. Pay in RLUSD or XRP, or upgrade at /pricing.`,
     accepts,
   };
 
@@ -209,6 +241,17 @@ export async function buildPaymentRequired(txHash: string): Promise<{
     status: "quoted",
     createdAt: Date.now(),
     updatedAt: Date.now(),
+  });
+
+  recordX402Quote({
+    invoiceId,
+    time: new Date(quote.createdAt).toISOString(),
+    usd: price.usd,
+    flrUsd: price.flrUsdRate,
+    feeFlr: price.flrCost,
+    flrCostUsd: price.flrCost * price.flrUsdRate,
+    xrpUsd: price.xrpUsdRate,
+    assets: accepts.map((a) => ({ asset: a.asset === RLUSD_HEX ? "RLUSD" : a.asset, amount: a.amount })),
   });
 
   return { paymentRequired, quote, price };
@@ -240,7 +283,7 @@ export function getQuote(invoiceId: string): StoredQuote | undefined {
   pruneQuotes();
   const q = quotes.get(invoiceId);
   if (!q) return undefined;
-  if (Date.now() - q.createdAt > QUOTE_TTL_MS) {
+  if (Date.now() - q.createdAt > getQuoteTtlMs()) {
     quotes.delete(invoiceId);
     return undefined;
   }
@@ -437,6 +480,18 @@ export async function processX402Payment(
     updatedAt: Date.now(),
   });
 
+  recordX402Settlement({
+    invoiceId,
+    time: new Date().toISOString(),
+    asset: requirements.asset === RLUSD_HEX ? "RLUSD" : requirements.asset,
+    amount: requirements.amount,
+    usd: quote.price.usd,
+    flrUsd: quote.price.flrUsdRate,
+    feeFlr: quote.price.flrCost,
+    flrCostUsd: quote.price.flrCost * quote.price.flrUsdRate,
+    settlementTx: settlement.transaction,
+  });
+
   return { outcome: "settled", invoiceId, settlement, requirements };
 }
 
@@ -447,7 +502,9 @@ export function getX402Config() {
     facilitatorUrl: facilitatorUrl(),
     network: xrplNetwork(),
     payToConfigured: Boolean(payTo),
-    rlusdIssuerConfigured: Boolean(rlusdIssuer()),
+    rlusdIssuerConfigured: Boolean(rlusdIssuer()) && XRPL_ADDRESS_RE.test(rlusdIssuer()),
+    rlusdIssuer: rlusdIssuer(),
+    quoteTtlMs: getQuoteTtlMs(),
   };
 }
 

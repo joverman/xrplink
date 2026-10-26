@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { store } from "./store.js";
 import { userStore, StoredUser, SubscriptionStatus } from "./user-store.js";
 import { Tier } from "./types.js";
+import { ATTESTATION_LIMITS } from "./attestation-quota.js";
 
 const stripeKey = process.env.STRIPE_SECRET_KEY || "";
 const stripe = stripeKey ? new Stripe(stripeKey) : null;
@@ -20,8 +21,8 @@ interface TierProduct {
 }
 
 const TIER_PRODUCTS: Record<string, TierProduct> = {
-  paid: { priceId: "", lookupKey: "xrplink_paid", unitAmount: 2900, receipts: 5, rateLimit: 100 },
-  pro: { priceId: "", lookupKey: "xrplink_pro", unitAmount: 9900, receipts: 25, rateLimit: Infinity },
+  paid: { priceId: "", lookupKey: "xrplink_paid", unitAmount: 2900, receipts: ATTESTATION_LIMITS.paid, rateLimit: 100 },
+  pro: { priceId: "", lookupKey: "xrplink_pro", unitAmount: 9900, receipts: ATTESTATION_LIMITS.pro, rateLimit: Infinity },
 };
 
 let portalConfigId: string | null = null;
@@ -46,7 +47,11 @@ export async function initProducts() {
 
     const product = await stripe.products.create({
       name: `XRPLink ${tier.charAt(0).toUpperCase() + tier.slice(1)}`,
-      description: tier === "paid" ? "5 verified receipts per month" : "25 verified receipts per month",
+      // Only used when creating a *new* Stripe product. Existing lookup-key prices are left untouched.
+      description:
+        tier === "paid"
+          ? `${ATTESTATION_LIMITS.paid} verified receipts per month`
+          : `${ATTESTATION_LIMITS.pro} verified receipts per month`,
     });
 
     const price = await stripe.prices.create({

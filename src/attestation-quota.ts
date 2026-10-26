@@ -1,16 +1,16 @@
 import { Tier } from "./types.js";
 
 /**
- * Monthly mainnet attestation limits per tier.
+ * Mainnet attestations per billing period.
  * Override via environment variables:
  *   ATTESTATION_LIMIT_FREE=0
- *   ATTESTATION_LIMIT_PAID=5
- *   ATTESTATION_LIMIT_PRO=25
+ *   ATTESTATION_LIMIT_PAID=20
+ *   ATTESTATION_LIMIT_PRO=100
  */
 export const ATTESTATION_LIMITS: Record<Tier, number> = {
   free: parseInt(process.env.ATTESTATION_LIMIT_FREE || "0", 10),
-  paid: parseInt(process.env.ATTESTATION_LIMIT_PAID || "5", 10),
-  pro: parseInt(process.env.ATTESTATION_LIMIT_PRO || "25", 10),
+  paid: parseInt(process.env.ATTESTATION_LIMIT_PAID || "20", 10),
+  pro: parseInt(process.env.ATTESTATION_LIMIT_PRO || "100", 10),
 };
 
 /**
@@ -143,13 +143,22 @@ export interface QuotaExceededError {
 /**
  * Build a quota exceeded error response.
  */
+function upgradeHint(tier: Tier): string {
+  if (tier === "free") {
+    return `Upgrade to Paid ($29/mo) for ${ATTESTATION_LIMITS.paid} attestations per billing period, or to Pro ($99/mo) for ${ATTESTATION_LIMITS.pro}. You can also buy a single extra attestation at the pay-per-use price.`;
+  }
+  if (tier === "paid") {
+    return `Upgrade to Pro ($99/mo) for ${ATTESTATION_LIMITS.pro} attestations per billing period, or buy a single extra attestation at the pay-per-use price.`;
+  }
+  return "You can buy a single extra attestation at the pay-per-use price.";
+}
+
 export function buildQuotaExceededError(result: QuotaCheckResult): QuotaExceededError {
   const tierName = result.tier.charAt(0).toUpperCase() + result.tier.slice(1);
-  const nextTier = result.tier === "free" ? "Paid ($29/mo)" : "Pro ($99/mo)";
-  
+
   return {
     code: "QUOTA_EXCEEDED",
-    message: `Monthly attestation limit reached. Your ${tierName} plan allows ${result.limit} mainnet attestation${result.limit === 1 ? "" : "s"} per billing period. Limit resets on ${result.resetDate}. Upgrade to ${nextTier} for a higher limit.`,
+    message: `Monthly attestation limit reached. Your ${tierName} plan allows ${result.limit} mainnet attestation${result.limit === 1 ? "" : "s"} per billing period. Limit resets on ${result.resetDate}. ${upgradeHint(result.tier)}`,
     tier: result.tier,
     limit: result.limit,
     used: result.used,

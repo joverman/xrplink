@@ -151,7 +151,9 @@ export function validateEnv(): EnvValidationResult {
     if (!payTo) {
       warnings.push(
         "X402_PAY_TO_ADDRESS not set. Pay-per-attestation (x402) is disabled. " +
-          "Set your XRPL classic address to accept XRP/RLUSD from agents."
+          "Set your XRPL classic address to accept XRP/RLUSD from agents. " +
+          "That wallet must already hold an RLUSD trust line to the issuer " +
+          "(mainnet default rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De)."
       );
     } else if (!/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(payTo)) {
       errors.push(

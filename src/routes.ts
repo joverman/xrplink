@@ -12,6 +12,7 @@ import {
   RegisterWebhookBody, Tier,
 } from "./types.js";
 import { attestXrpPayment } from "./attest.js";
+import { ATTESTATION_LIMITS } from "./attestation-quota.js";
 
 const router = Router();
 
@@ -393,7 +394,7 @@ npm run start:mcp</code></pre>
 <tr><td><code>PAYMENT_REQUIRED</code></td><td>402</td><td>x402 quote: pay XRP or RLUSD for one attestation</td></tr>
 <tr><td><code>QUOTA_EXCEEDED</code></td><td>402</td><td>Monthly attestation limit reached (includes x402 quote when pay-per-use is enabled)</td></tr>
 <tr><td><code>PAYMENT_REPLAY</code></td><td>409</td><td>That x402 payment was already used</td></tr>
-<tr><td><code>PRICE_UNAVAILABLE</code></td><td>503</td><td>FTSO price feed down; pay-per-use fails closed</td></tr>
+<tr><td><code>PRICE_UNAVAILABLE</code></td><td>503</td><td>FTSO and Kraken price feeds stale or down; pay-per-use fails closed</td></tr>
 <tr><td><code>RATE_LIMITED</code></td><td>429</td><td>Per-minute limit exceeded for your tier</td></tr>
 <tr><td><code>INVALID_TX_HASH</code></td><td>400</td><td>Not a valid 64-hex transaction hash</td></tr>
 <tr><td><code>SUBMIT_FAILED</code></td><td>500</td><td>Attestation submission to FdcHub failed</td></tr>
@@ -591,12 +592,12 @@ Connect via Streamable HTTP transport (POST for requests, GET for SSE).
 | Tier | Price | Monthly Attestations |
 |------|-------|---------------------|
 | Free | $0 | 0 (lookup only) |
-| Paid | $29/mo | 5 |
-| Pro | $99/mo | 25 |
+| Paid | $29/mo | ${ATTESTATION_LIMITS.paid} |
+| Pro | $99/mo | ${ATTESTATION_LIMITS.pro} |
 
 Testnet (Coston2) has no limits.
 
-Pay-per-use (x402, no subscription): price_usd = max(FLOOR_USD, 20 FLR × FLR/USD × MARKUP). Defaults FLOOR_USD=0.50, MARKUP=3. Paid in XRP or RLUSD via https://xrpl-facilitator-mainnet.t54.ai. Subscribers inside quota are never asked to pay.
+Pay-per-use (x402, no subscription): price_usd = clamp(max(floor, fee_flr × FLR/USD × markup), floor, cap), rounded up to a price step. Defaults floor=$2.50, markup=3, cap=$10.00, step=$0.25. Accepts RLUSD first, then XRP (1% buffer). Subscribers inside quota are never asked to pay. Over-quota subscribers can upgrade or buy one extra attestation.
 
 ## Response Time
 
@@ -637,7 +638,7 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
         post: {
           tags: ["Attestation"],
           summary: "Verify an XRP payment",
-          description: "Submit an XRP transaction hash for FDC attestation. Subscription API keys inside quota are not charged extra. Without a key or over quota, the server returns HTTP 402 with x402 payment requirements (XRP or RLUSD on the XRP Ledger). Retry with PAYMENT-SIGNATURE after paying. One payment authorizes exactly one attestation. Proof takes ~90-180 seconds.",
+          description: "Submit an XRP transaction hash for FDC attestation. Subscription API keys inside quota are not charged extra (Paid: 20 mainnet attestations per billing period; Pro: 100). Without a key or over quota, the server returns HTTP 402 with x402 payment requirements (RLUSD first, then XRP). Over-quota subscribers can upgrade or buy a single extra attestation. Retry with PAYMENT-SIGNATURE after paying. One payment authorizes exactly one attestation. Proof takes ~90-180 seconds.",
           security: [{ ApiKeyAuth: [] }, { X402: [] }],
           requestBody: {
             required: true,
@@ -1033,7 +1034,7 @@ function renderDashboard(data) {
   const apiKeys = data.apiKeys;
   const apiKey = apiKeys[0] || { key: localStorage.getItem(API_KEY_KEY) || 'Loading...' };
   const tier = user.tier || 'free';
-  const monthlyLimit = tier === 'free' ? 0 : (tier === 'paid' ? 5 : 25);
+  const monthlyLimit = tier === 'free' ? ${ATTESTATION_LIMITS.free} : (tier === 'paid' ? ${ATTESTATION_LIMITS.paid} : ${ATTESTATION_LIMITS.pro});
   const usage = user.usageCount || 0;
 
   document.getElementById('loading').style.display = 'none';
@@ -1100,13 +1101,13 @@ function renderDashboard(data) {
     \` : tier === 'paid' ? \`
       <div class="upgrade-banner" style="background:linear-gradient(135deg,#065f46,#0f172a);border-color:#065f46">
         <h3>✓ You're on the Paid plan</h3>
-        <p>5 verified receipts per month. Need more? Upgrade to Pro for 25 receipts and unlimited rate limits.</p>
+        <p>${ATTESTATION_LIMITS.paid} verified receipts per month. Need more? Upgrade to Pro for ${ATTESTATION_LIMITS.pro} receipts and unlimited rate limits, or buy extra attestations via x402.</p>
         <button onclick="subscribe('pro')" class="btn btn-outline" style="margin-top:0.5rem">Upgrade to Pro — \$99/mo</button>
       </div>
     \` : \`
       <div class="upgrade-banner" style="background:linear-gradient(135deg,#3b1e5f,#0f172a);border-color:#3b1e5f">
         <h3>✓ You're on the Pro plan</h3>
-        <p>25 verified receipts per month with unlimited rate limits. You have full access to all features.</p>
+        <p>${ATTESTATION_LIMITS.pro} verified receipts per month with unlimited rate limits. Extra attestations can be purchased via x402.</p>
       </div>
     \`}
   \`;
@@ -1661,6 +1662,20 @@ router.get("/api/v1/admin/keys", requireApiKey, async (req: Request, res: Respon
     return res.status(403).json(formatError("FORBIDDEN"));
   }
   return res.json(await store.listApiKeys());
+});
+
+router.get("/api/v1/admin/x402-margin", requireApiKey, async (req: Request, res: Response) => {
+  if ((req as any).apiKey.tier !== "pro") {
+    return res.status(403).json(formatError("FORBIDDEN"));
+  }
+  const { getDailyMargin, getMarginSummaries } = await import("./x402-ledger.js");
+  const date = typeof req.query.date === "string" ? req.query.date : undefined;
+  const from = typeof req.query.from === "string" ? req.query.from : undefined;
+  const to = typeof req.query.to === "string" ? req.query.to : undefined;
+  if (from || to) {
+    return res.json({ days: getMarginSummaries(from, to) });
+  }
+  return res.json(getDailyMargin(date));
 });
 
 router.delete("/api/v1/admin/keys/:key", requireApiKey, async (req: Request, res: Response) => {

@@ -32,6 +32,26 @@ On-chain proof verification is disabled when this is not set. The app works with
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
 | `STRIPE_AUTOMATIC_TAX` | Enable Stripe Tax (optional) | `false` |
 
+### x402 pay-per-use
+
+`X402_PAY_TO_ADDRESS` is the only pay-to setting. Do not hardcode a wallet. The receiving wallet must already hold an RLUSD trust line to the issuer (mainnet default `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`).
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `X402_PAY_TO_ADDRESS` | unset | XRPL classic address that receives RLUSD/XRP |
+| `X402_RLUSD_ISSUER` | mainnet `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`; testnet `rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV` | RLUSD issuer (overridable) |
+| `X402_FLOOR_USD` | `2.50` | Minimum USD quote |
+| `X402_CAP_USD` | `10.00` | Maximum USD quote |
+| `X402_PRICE_STEP_USD` | `0.25` | Round USD price up to this step |
+| `X402_MARKUP` | `3` | Multiplier on FLR cost |
+| `X402_XRP_BUFFER` | `0.01` | Extra 1% on the XRP amount |
+| `ATTESTATION_FEE_FLR` | `20` | Fallback FDC fee if the chain cannot be read |
+| `X402_PRICE_REFRESH_MS` | `60000` | FTSO/Kraken refresh interval |
+| `X402_PRICE_MAX_AGE_MS` | `300000` | Fail closed if the price is older than this |
+| `X402_QUOTE_TTL_MS` | `120000` | Stored quote lifetime |
+| `ATTESTATION_LIMIT_PAID` | `20` | Paid-tier mainnet attestations per billing period |
+| `ATTESTATION_LIMIT_PRO` | `100` | Pro-tier mainnet attestations per billing period |
+
 ## Stripe Go-Live Checklist
 
 Before switching from Stripe test mode to live mode:

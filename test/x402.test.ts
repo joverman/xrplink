@@ -8,16 +8,24 @@ import assert from "node:assert/strict";
 import { describe, it, before, after, beforeEach } from "node:test";
 import http from "node:http";
 import express from "express";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 process.env.PORT = "3459";
 process.env.SESSION_SECRET = "test-secret-for-testing-1234567890";
 process.env.FLARE_NETWORK = "flare";
+process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "xrplink-x402-"));
 process.env.X402_ENABLED = "true";
 process.env.X402_PAY_TO_ADDRESS = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh";
-process.env.X402_FLOOR_USD = "0.50";
+process.env.X402_FLOOR_USD = "2.50";
+process.env.X402_CAP_USD = "10";
+process.env.X402_PRICE_STEP_USD = "0.25";
 process.env.X402_MARKUP = "3";
+process.env.X402_XRP_BUFFER = "0.01";
 process.env.ATTESTATION_FEE_FLR = "20";
-process.env.X402_RLUSD_ISSUER = "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De";
+process.env.X402_QUOTE_TTL_MS = "120000";
+delete process.env.X402_RLUSD_ISSUER;
 
 const PORT = 3459;
 let server: http.Server | null = null;
@@ -25,8 +33,13 @@ let storeModule: typeof import("../src/store.js");
 let priceModule: typeof import("../src/price-service.js");
 let x402Module: typeof import("../src/x402-service.js");
 let attestModule: typeof import("../src/attest.js");
+let ledgerModule: typeof import("../src/x402-ledger.js");
 
 const TEST_PAY_TO = process.env.X402_PAY_TO_ADDRESS!;
+const MAINNET_RLUSD = "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De";
+const TESTNET_RLUSD = "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV";
+const RLUSD_HEX = "524C555344000000000000000000000000000000";
+const FLOOR_XRP_DROPS = "1262500"; // $2.50 / $2 * 1.01 = 1.2625 XRP
 
 function generateTestTxHash(suffix: string): string {
   const timestamp = Date.now().toString(16).toUpperCase();
@@ -115,38 +128,79 @@ function encodePayment(invoiceId: string, asset = "XRP"): string {
 describe("x402 price formula", () => {
   it("applies the floor when marked-up FLR cost is below FLOOR_USD", async () => {
     const { calculateAttestationPrice } = await import("../src/price-service.js");
-    // 20 FLR × $0.007 = $0.14 × 3 = $0.42 → floor $0.50 (mid-Oct 2026 FLR cost)
     const p = calculateAttestationPrice({
       flrUsd: 0.007,
       xrpUsd: 2,
       feeFlr: 20,
       markup: 3,
-      floorUsd: 0.5,
+      floorUsd: 2.5,
+      capUsd: 10,
+      stepUsd: 0.25,
+      xrpBuffer: 0.01,
     });
-    assert.equal(p.usd, 0.5);
+    assert.equal(p.usd, 2.5);
     assert.equal(p.floorApplied, true);
-    assert.equal(p.xrpDrops, "250000");
-    assert.equal(p.rlusd, "0.5");
+    assert.equal(p.capApplied, false);
+    assert.equal(p.xrpDrops, FLOOR_XRP_DROPS);
+    assert.equal(p.rlusd, "2.5");
   });
 
-  it("uses marked-up cost when it exceeds the floor", async () => {
+  it("rounds UP to the price step after clamp", async () => {
+    const { calculateAttestationPrice } = await import("../src/price-service.js");
+    // 20 × 0.043 × 3 = 2.58 → next step 2.75
+    const p = calculateAttestationPrice({
+      flrUsd: 0.043,
+      xrpUsd: 2,
+      feeFlr: 20,
+      markup: 3,
+      floorUsd: 2.5,
+      capUsd: 10,
+      stepUsd: 0.25,
+      xrpBuffer: 0,
+    });
+    assert.equal(p.usd, 2.75);
+    assert.equal(p.stepApplied, true);
+  });
+
+  it("applies the cap when marked-up cost exceeds it", async () => {
     const { calculateAttestationPrice } = await import("../src/price-service.js");
     const p = calculateAttestationPrice({
       flrUsd: 0.2,
       xrpUsd: 2,
       feeFlr: 20,
       markup: 3,
-      floorUsd: 0.5,
+      floorUsd: 2.5,
+      capUsd: 10,
+      stepUsd: 0.25,
+      xrpBuffer: 0.01,
     });
-    assert.equal(p.usd, 12);
+    assert.equal(p.usd, 10);
+    assert.equal(p.capApplied, true);
     assert.equal(p.floorApplied, false);
-    assert.equal(p.xrpDrops, "6000000");
+    assert.equal(p.xrpDrops, "5050000"); // 10 / 2 * 1.01
+  });
+
+  it("adds a 1% buffer to the XRP amount only", async () => {
+    const { calculateAttestationPrice } = await import("../src/price-service.js");
+    const p = calculateAttestationPrice({
+      flrUsd: 0.007,
+      xrpUsd: 2,
+      feeFlr: 20,
+      markup: 3,
+      floorUsd: 2.5,
+      capUsd: 10,
+      stepUsd: 0.25,
+      xrpBuffer: 0.01,
+    });
+    assert.equal(p.rlusd, "2.5");
+    assert.ok(p.xrp > 1.25);
+    assert.equal(p.xrpDrops, "1262500");
   });
 
   it("fails closed on non-positive feed values", async () => {
     const { calculateAttestationPrice } = await import("../src/price-service.js");
     assert.throws(() =>
-      calculateAttestationPrice({ flrUsd: 0, xrpUsd: 2, feeFlr: 20, markup: 3, floorUsd: 0.5 })
+      calculateAttestationPrice({ flrUsd: 0, xrpUsd: 2, feeFlr: 20, markup: 3, floorUsd: 2.5 })
     );
   });
 });
@@ -158,12 +212,24 @@ describe("x402 REST and MCP", () => {
   let failFdc = false;
 
   before(async () => {
+    process.env.X402_ENABLED = "true";
+    process.env.X402_PAY_TO_ADDRESS = TEST_PAY_TO;
+    process.env.X402_FLOOR_USD = "2.50";
+    process.env.X402_CAP_USD = "10";
+    process.env.X402_PRICE_STEP_USD = "0.25";
+    process.env.X402_MARKUP = "3";
+    process.env.X402_XRP_BUFFER = "0.01";
+    process.env.ATTESTATION_FEE_FLR = "20";
+    delete process.env.X402_RLUSD_ISSUER;
+
     priceModule = await import("../src/price-service.js");
     x402Module = await import("../src/x402-service.js");
     attestModule = await import("../src/attest.js");
     storeModule = await import("../src/store.js");
+    ledgerModule = await import("../src/x402-ledger.js");
 
     priceModule.setMockPrices(0.007, 2);
+    priceModule.setOnChainFeeFailureForTests(true);
 
     x402Module.setFacilitatorMockForTests(async (path) => {
       facilitatorCalls.push({ path });
@@ -209,6 +275,7 @@ describe("x402 REST and MCP", () => {
     priceModule.resetPriceServiceForTests();
     x402Module.resetX402ForTests();
     attestModule.setFdcMocksForTests(null);
+    ledgerModule.resetX402LedgerForTests();
   });
 
   beforeEach(() => {
@@ -216,10 +283,17 @@ describe("x402 REST and MCP", () => {
     fdcSubmitCount = 0;
     failVerify = false;
     failFdc = false;
+    priceModule.resetPriceServiceForTests();
     priceModule.setMockPrices(0.007, 2);
+    priceModule.setOnChainFeeFailureForTests(true);
+    process.env.X402_ENABLED = "true";
+    process.env.X402_PAY_TO_ADDRESS = TEST_PAY_TO;
+    delete process.env.X402_RLUSD_ISSUER;
+    process.env.XRPL_NETWORK = "xrpl:0";
+    process.env.X402_QUOTE_TTL_MS = "120000";
   });
 
-  it("returns a spec-shaped 402 when no API key is provided", async () => {
+  it("returns a spec-shaped 402 with RLUSD first and XRP second", async () => {
     const txHash = generateTestTxHash("NOKEY");
     const res = await request("POST", "/api/v1/verify/xrp-payment", { txHash });
     assert.equal(res.status, 402);
@@ -227,19 +301,40 @@ describe("x402 REST and MCP", () => {
     assert.ok(res.headers["payment-required"], "PAYMENT-REQUIRED header");
     const pr = res.body.paymentRequired;
     assert.equal(pr.x402Version, 2);
-    assert.ok(Array.isArray(pr.accepts) && pr.accepts.length >= 1);
-    const xrp = pr.accepts.find((a: any) => a.asset === "XRP");
-    assert.ok(xrp);
+    assert.equal(pr.accepts.length, 2);
+    const rlusd = pr.accepts[0];
+    const xrp = pr.accepts[1];
+    assert.equal(rlusd.asset, RLUSD_HEX);
+    assert.equal(rlusd.extra.issuer, MAINNET_RLUSD);
+    assert.equal(rlusd.amount, "2.5");
+    assert.equal(rlusd.payTo, TEST_PAY_TO);
+    assert.equal(xrp.asset, "XRP");
     assert.equal(xrp.scheme, "exact");
     assert.equal(xrp.network, "xrpl:0");
     assert.equal(xrp.payTo, TEST_PAY_TO);
-    assert.equal(xrp.amount, "250000");
+    assert.equal(xrp.amount, FLOOR_XRP_DROPS);
     assert.equal(xrp.extra.areFeesSponsored, false);
     assert.ok(xrp.extra.invoiceId);
-    assert.equal(res.body.priceUsd, 0.5);
+    assert.equal(rlusd.extra.invoiceId, xrp.extra.invoiceId);
+    assert.equal(res.body.priceUsd, 2.5);
     const after = await storeModule.store.getByTxHash(txHash);
     assert.equal(after, undefined);
     assert.equal(fdcSubmitCount, 0);
+  });
+
+  it("includes RLUSD by default without X402_RLUSD_ISSUER", async () => {
+    assert.equal(process.env.X402_RLUSD_ISSUER, undefined);
+    const { paymentRequired } = await x402Module.buildPaymentRequired(generateTestTxHash("DEFISS"));
+    assert.equal(paymentRequired.accepts[0].extra.issuer, MAINNET_RLUSD);
+    assert.equal(x402Module.defaultRlusdIssuer("xrpl:0"), MAINNET_RLUSD);
+    assert.equal(x402Module.defaultRlusdIssuer("xrpl:1"), TESTNET_RLUSD);
+  });
+
+  it("uses the documented testnet RLUSD issuer when XRPL_NETWORK is testnet", async () => {
+    process.env.XRPL_NETWORK = "xrpl:1";
+    const { paymentRequired } = await x402Module.buildPaymentRequired(generateTestTxHash("TNISS"));
+    assert.equal(paymentRequired.accepts[0].extra.issuer, TESTNET_RLUSD);
+    assert.equal(paymentRequired.accepts[1].asset, "XRP");
   });
 
   it("settles a valid x402 payment then attests", async () => {
@@ -259,6 +354,41 @@ describe("x402 REST and MCP", () => {
     assert.ok(paid.headers["payment-response"]);
   });
 
+  it("logs quotes and settlements by invoice id and computes daily margin", async () => {
+    ledgerModule.resetX402LedgerForTests();
+    const txHash = generateTestTxHash("LEDGER");
+    const quote = await request("POST", "/api/v1/verify/xrp-payment", { txHash });
+    const invoiceId = quote.body.paymentRequired.accepts[0].extra.invoiceId;
+    const eventsAfterQuote = ledgerModule.listX402LedgerEvents();
+    assert.ok(eventsAfterQuote.some((e) => e.type === "quote" && e.invoiceId === invoiceId));
+
+    const sig = encodePayment(invoiceId);
+    const paid = await request("POST", "/api/v1/verify/xrp-payment", { txHash }, { "PAYMENT-SIGNATURE": sig });
+    assert.equal(paid.status, 202);
+    const events = ledgerModule.listX402LedgerEvents();
+    const settled = events.find((e) => e.type === "settled" && e.invoiceId === invoiceId);
+    assert.ok(settled);
+    assert.equal(settled.usd, 2.5);
+    assert.equal(settled.feeFlr, 20);
+    const margin = ledgerModule.getDailyMargin(settled.time.slice(0, 10));
+    assert.equal(margin.settlements, 1);
+    assert.equal(margin.revenueUsd, 2.5);
+    assert.ok(margin.flrCostUsd > 0);
+    assert.ok(margin.marginUsd > 0);
+  });
+
+  it("serves the daily margin summary on the pro-only admin endpoint", async () => {
+    const pro = await storeModule.store.createApiKey("margin-admin", "pro");
+    const paid = await storeModule.store.createApiKey("margin-paid", "paid");
+    const forbidden = await request("GET", "/api/v1/admin/x402-margin", undefined, { "X-API-Key": paid.key });
+    assert.equal(forbidden.status, 403);
+    const ok = await request("GET", "/api/v1/admin/x402-margin", undefined, { "X-API-Key": pro.key });
+    assert.equal(ok.status, 200);
+    assert.ok(typeof ok.body.revenueUsd === "number");
+    assert.ok(typeof ok.body.flrCostUsd === "number");
+    assert.ok(typeof ok.body.marginUsd === "number");
+  });
+
   it("rejects a replay of the same payment and does not call FDC again", async () => {
     const txHash = generateTestTxHash("REPLAY");
     const quote = await request("POST", "/api/v1/verify/xrp-payment", { txHash });
@@ -271,7 +401,6 @@ describe("x402 REST and MCP", () => {
 
     const replay = await request("POST", "/api/v1/verify/xrp-payment", { txHash }, { "PAYMENT-SIGNATURE": sig });
     assert.ok(replay.status === 409 || replay.status === 200, `unexpected ${replay.status}`);
-    // Cached attestation (same txHash) is returned without a second FDC submit
     assert.equal(fdcSubmitCount, 1);
   });
 
@@ -303,7 +432,32 @@ describe("x402 REST and MCP", () => {
     assert.equal(res.body.x402, undefined);
   });
 
-  it("fails closed when the price feed is down", async () => {
+  it("offers an over-quota Paid subscriber an upgrade prompt and an x402 extra", async () => {
+    const { store } = storeModule;
+    const { ATTESTATION_LIMITS, getFallbackBillingPeriod, getBillingPeriodKey } = await import(
+      "../src/attestation-quota.js"
+    );
+    const paidKey = await store.createApiKey("x402-over-quota", "paid");
+    const period = getFallbackBillingPeriod(paidKey.createdAt);
+    const periodKey = getBillingPeriodKey(period);
+    for (let i = 0; i < ATTESTATION_LIMITS.paid; i++) {
+      await store.incrementAttestationUsage(paidKey.key, periodKey);
+    }
+
+    const txHash = generateTestTxHash("OVERCAP");
+    const res = await request("POST", "/api/v1/verify/xrp-payment", { txHash }, { "X-API-Key": paidKey.key });
+    assert.equal(res.status, 402);
+    assert.equal(res.body.code, "QUOTA_EXCEEDED");
+    assert.ok(res.body.message.includes("Upgrade to Pro"));
+    assert.ok(res.body.message.toLowerCase().includes("pay-per-use"));
+    assert.equal(res.body.upgradeUrl, "/pricing");
+    assert.equal(res.body.paymentRequired.accepts[0].asset, RLUSD_HEX);
+    assert.equal(res.body.paymentRequired.accepts[1].asset, "XRP");
+    assert.equal(res.body.priceUsd, 2.5);
+    assert.equal(fdcSubmitCount, 0);
+  });
+
+  it("fails closed when FTSO and Kraken are down", async () => {
     priceModule.setPriceFeedFailureForTests(true);
     priceModule.clearPriceCache();
     const txHash = generateTestTxHash("NOPRICE");
@@ -312,6 +466,42 @@ describe("x402 REST and MCP", () => {
     assert.equal(res.body.code, "PRICE_UNAVAILABLE");
     assert.equal(fdcSubmitCount, 0);
     priceModule.setMockPrices(0.007, 2);
+  });
+
+  it("falls back to Kraken when FTSO is down", async () => {
+    priceModule.setPriceFeedFailureForTests(true);
+    priceModule.clearPriceCache();
+    priceModule.setKrakenMockForTests(0.007, 2);
+    const txHash = generateTestTxHash("KRAKEN");
+    const res = await request("POST", "/api/v1/verify/xrp-payment", { txHash });
+    assert.equal(res.status, 402, JSON.stringify(res.body));
+    assert.equal(res.body.priceUsd, 2.5);
+  });
+
+  it("fails closed when the only cached price is older than max age", async () => {
+    priceModule.setStalePriceCacheForTests(0.007, 2, 400_000);
+    const txHash = generateTestTxHash("STALE");
+    const res = await request("POST", "/api/v1/verify/xrp-payment", { txHash });
+    assert.equal(res.status, 503);
+    assert.equal(res.body.code, "PRICE_UNAVAILABLE");
+  });
+
+  it("uses the on-chain FDC fee when available", async () => {
+    priceModule.setMockOnChainFeeFlr(25);
+    priceModule.setMockPrices(0.05, 2);
+    const p = await priceModule.getAttestationPrice();
+    assert.equal(p.flrCost, 25);
+    assert.equal(p.usd, 3.75);
+  });
+
+  it("rejects an expired quote", async () => {
+    process.env.X402_QUOTE_TTL_MS = "1";
+    const txHash = generateTestTxHash("TTL");
+    const { paymentRequired } = await x402Module.buildPaymentRequired(txHash);
+    await new Promise((r) => setTimeout(r, 5));
+    const invoiceId = paymentRequired.accepts[0].extra.invoiceId;
+    assert.equal(x402Module.getQuote(invoiceId), undefined);
+    process.env.X402_QUOTE_TTL_MS = "120000";
   });
 
   it("lets FDC retry after settlement if submit fails, without a second charge", async () => {
