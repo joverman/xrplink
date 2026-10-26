@@ -231,6 +231,8 @@ async function updateUserSubscription(
     subscriptionStatus?: SubscriptionStatus;
     stripeCustomerId?: string;
     stripeSubscriptionId?: string;
+    billingPeriodStart?: number;
+    billingPeriodEnd?: number;
   }
 ): Promise<void> {
   userStore.update(user.id, updates);
@@ -265,14 +267,30 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promis
       ? session.subscription
       : session.subscription?.id;
 
+  // Fetch subscription to get billing period
+  let billingPeriodStart: number | undefined;
+  let billingPeriodEnd: number | undefined;
+  
+  if (stripe && subscriptionId) {
+    try {
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId) as any;
+      billingPeriodStart = subscription.current_period_start;
+      billingPeriodEnd = subscription.current_period_end;
+    } catch (err) {
+      console.error("Failed to fetch subscription for billing period:", err);
+    }
+  }
+
   await updateUserSubscription(user, {
     tier,
     subscriptionStatus: "active",
     stripeCustomerId: session.customer as string,
     stripeSubscriptionId: subscriptionId || "",
+    billingPeriodStart,
+    billingPeriodEnd,
   });
 
-  console.log(`Upgraded user ${userId} to ${tier} via checkout`);
+  console.log(`Upgraded user ${userId} to ${tier} via checkout (period: ${billingPeriodStart} - ${billingPeriodEnd})`);
 }
 
 async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Promise<void> {
@@ -314,14 +332,21 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
     status = "canceled";
   }
 
+  // Always update billing period from subscription
+  const sub = subscription as any;
+  const billingPeriodStart = sub.current_period_start as number;
+  const billingPeriodEnd = sub.current_period_end as number;
+
   await updateUserSubscription(user, {
     tier: priceInfo.tier,
     subscriptionStatus: status,
     stripeSubscriptionId: subscription.id,
+    billingPeriodStart,
+    billingPeriodEnd,
   });
 
   console.log(
-    `Updated user ${user.id} subscription: tier=${priceInfo.tier}, status=${status}`
+    `Updated user ${user.id} subscription: tier=${priceInfo.tier}, status=${status}, period=${billingPeriodStart}-${billingPeriodEnd}`
   );
 }
 
@@ -386,7 +411,48 @@ async function handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
     return;
   }
 
-  if (user.subscriptionStatus === "past_due") {
+  // Check if this invoice has subscription billing period info
+  // This indicates a subscription renewal, so we should update the billing period
+  const inv = invoice as unknown as { subscription?: string | { id: string } };
+  const subscriptionId = typeof inv.subscription === "string" 
+    ? inv.subscription 
+    : inv.subscription?.id;
+    
+  if (subscriptionId && stripe) {
+    try {
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId) as any;
+      const newPeriodStart = subscription.current_period_start as number;
+      const newPeriodEnd = subscription.current_period_end as number;
+      
+      // Check if this is a new billing period (period start changed)
+      const isNewPeriod = user.billingPeriodStart !== newPeriodStart;
+      
+      if (isNewPeriod) {
+        // Update billing period - usage will automatically reset because
+        // attestation usage is keyed by billing period start timestamp
+        await updateUserSubscription(user, {
+          subscriptionStatus: "active",
+          billingPeriodStart: newPeriodStart,
+          billingPeriodEnd: newPeriodEnd,
+        });
+        console.log(`New billing period for user ${user.id}: ${newPeriodStart} - ${newPeriodEnd}`);
+      } else if (user.subscriptionStatus === "past_due") {
+        await updateUserSubscription(user, {
+          subscriptionStatus: "active",
+        });
+        console.log(`Cleared past_due status for user ${user.id} after successful payment`);
+      }
+    } catch (err) {
+      console.error("Failed to fetch subscription for billing period update:", err);
+      // Still clear past_due if applicable
+      if (user.subscriptionStatus === "past_due") {
+        await updateUserSubscription(user, {
+          subscriptionStatus: "active",
+        });
+        console.log(`Cleared past_due status for user ${user.id} after successful payment`);
+      }
+    }
+  } else if (user.subscriptionStatus === "past_due") {
     await updateUserSubscription(user, {
       subscriptionStatus: "active",
     });

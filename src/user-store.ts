@@ -18,6 +18,10 @@ export interface StoredUser {
   tier: Tier;
   subscriptionStatus: SubscriptionStatus;
   createdAt: string;
+  /** Stripe billing period start (Unix timestamp in seconds) */
+  billingPeriodStart?: number;
+  /** Stripe billing period end (Unix timestamp in seconds) */
+  billingPeriodEnd?: number;
 }
 
 interface PersistedData {
@@ -113,6 +117,14 @@ class UserStore {
     delete this.data.users[id];
     delete this.data.emailIndex[user.email.toLowerCase()];
     this.persist();
+  }
+
+  /** Find user who owns a specific API key */
+  findByApiKey(apiKey: string): StoredUser | undefined {
+    for (const user of Object.values(this.data.users)) {
+      if (user.apiKeyIds.includes(apiKey)) return user;
+    }
+    return undefined;
   }
 }
 

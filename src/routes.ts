@@ -13,6 +13,15 @@ import {
   AttestationStatus, VerifyResponse, StatusResponse,
   RegisterWebhookBody, ApiError, Tier,
 } from "./types.js";
+import { 
+  checkQuota, 
+  buildQuotaExceededError, 
+  ATTESTATION_LIMITS, 
+  BillingPeriod,
+  getFallbackBillingPeriod,
+  getBillingPeriodKey,
+} from "./attestation-quota.js";
+import { userStore } from "./user-store.js";
 
 const router = Router();
 
@@ -1137,6 +1146,7 @@ router.get("/mcp/prompts", (_req: Request, res: Response) => {
 
 router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, res: Response) => {
   const { txHash } = req.body;
+  const apiKey = (req as any).apiKey;
 
   if (!txHash || typeof txHash !== "string") {
     return res.status(400).json(formatError("MISSING_TX_HASH", undefined, "txHash is required"));
@@ -1147,6 +1157,7 @@ router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, re
     return res.status(400).json(formatError("INVALID_TX_HASH"));
   }
 
+  // Re-attesting an already-attested tx does not count against quota (cached result)
   const cached = await store.getByTxHash(cleanHash);
   if (cached) {
     if (cached.status === "verified") {
@@ -1155,6 +1166,7 @@ router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, re
     return res.json({ id: cached.id, txHash: cleanHash, roundId: cached.roundId, status: cached.status } satisfies VerifyResponse);
   }
 
+  // Check if already verified on-chain (no FLR cost, doesn't count against quota)
   if (config.paymentVerifierAddress) {
     try {
       const alreadyVerified = await fdc.isAlreadyVerified(cleanHash);
@@ -1166,6 +1178,39 @@ router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, re
     } catch {}
   }
 
+  // Check attestation quota BEFORE submitting to FDC (to avoid spending FLR)
+  // Only check when on mainnet (FLARE_NETWORK=flare) - testnet is uncapped
+  const isMainnet = config.network === "flare";
+  let billingPeriod: BillingPeriod | null = null;
+  
+  if (isMainnet) {
+    // Find the user who owns this API key to get their billing period
+    const apiKeyOwner = userStore.findByApiKey(apiKey.key);
+    
+    if (apiKeyOwner && apiKeyOwner.billingPeriodStart && apiKeyOwner.billingPeriodEnd) {
+      // Use Stripe billing period
+      billingPeriod = {
+        start: apiKeyOwner.billingPeriodStart,
+        end: apiKeyOwner.billingPeriodEnd,
+      };
+    } else if (apiKeyOwner) {
+      // Fallback: use 30-day rolling period anchored to account creation
+      billingPeriod = getFallbackBillingPeriod(apiKeyOwner.createdAt);
+    } else {
+      // No owner found - use API key creation date as anchor (edge case)
+      billingPeriod = getFallbackBillingPeriod(apiKey.createdAt);
+    }
+    
+    const periodKey = getBillingPeriodKey(billingPeriod);
+    const currentUsage = await store.getAttestationUsage(apiKey.key, periodKey);
+    const quotaCheck = checkQuota(apiKey.tier, currentUsage, billingPeriod);
+
+    if (!quotaCheck.allowed) {
+      const error = buildQuotaExceededError(quotaCheck);
+      return res.status(402).json(error);
+    }
+  }
+
   const attestation = await store.createAttestation(cleanHash);
 
   try {
@@ -1175,6 +1220,12 @@ router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, re
 
     const { roundId, txHash: submitTxHash } = await fdc.submitRequest(abiEncoded);
     await store.updateAttestation(attestation.id, { roundId, status: "pending" });
+
+    // Increment usage AFTER successful FDC submission (only on mainnet)
+    if (isMainnet && billingPeriod) {
+      const periodKey = getBillingPeriodKey(billingPeriod);
+      await store.incrementAttestationUsage(apiKey.key, periodKey);
+    }
 
     console.log(`Attestation ${attestation.id}: submitted to round ${roundId} (tx: ${submitTxHash})`);
 
