@@ -384,3 +384,143 @@ describe("Billing Configuration", () => {
     assert.equal(isAutomaticTaxEnabled(), false);
   });
 });
+
+describe("Attestation Quota", () => {
+  it("should have default limits matching spec (free=0, paid=5, pro=25)", async () => {
+    const { ATTESTATION_LIMITS } = await import("../src/attestation-quota.js");
+    
+    assert.equal(ATTESTATION_LIMITS.free, 0);
+    assert.equal(ATTESTATION_LIMITS.paid, 5);
+    assert.equal(ATTESTATION_LIMITS.pro, 25);
+  });
+
+  it("should generate correct month key format YYYY-MM", async () => {
+    const { getCurrentMonthKey } = await import("../src/attestation-quota.js");
+    
+    const monthKey = getCurrentMonthKey();
+    assert.match(monthKey, /^\d{4}-\d{2}$/);
+    
+    const now = new Date();
+    const expectedYear = now.getUTCFullYear();
+    const expectedMonth = String(now.getUTCMonth() + 1).padStart(2, "0");
+    assert.equal(monthKey, `${expectedYear}-${expectedMonth}`);
+  });
+
+  it("should calculate reset date as first of next month UTC", async () => {
+    const { getMonthResetDate } = await import("../src/attestation-quota.js");
+    
+    const resetDate = getMonthResetDate();
+    assert.equal(resetDate.getUTCDate(), 1);
+    assert.equal(resetDate.getUTCHours(), 0);
+    assert.equal(resetDate.getUTCMinutes(), 0);
+    
+    const now = new Date();
+    if (now.getUTCMonth() === 11) {
+      assert.equal(resetDate.getUTCMonth(), 0);
+      assert.equal(resetDate.getUTCFullYear(), now.getUTCFullYear() + 1);
+    } else {
+      assert.equal(resetDate.getUTCMonth(), now.getUTCMonth() + 1);
+      assert.equal(resetDate.getUTCFullYear(), now.getUTCFullYear());
+    }
+  });
+
+  it("should allow attestation when under quota", async () => {
+    const { checkQuota } = await import("../src/attestation-quota.js");
+    
+    const result = checkQuota("paid", 3);
+    assert.equal(result.allowed, true);
+    assert.equal(result.used, 3);
+    assert.equal(result.limit, 5);
+    assert.equal(result.remaining, 2);
+  });
+
+  it("should deny attestation when at quota limit", async () => {
+    const { checkQuota } = await import("../src/attestation-quota.js");
+    
+    const result = checkQuota("paid", 5);
+    assert.equal(result.allowed, false);
+    assert.equal(result.used, 5);
+    assert.equal(result.limit, 5);
+    assert.equal(result.remaining, 0);
+  });
+
+  it("should deny attestation when over quota limit", async () => {
+    const { checkQuota } = await import("../src/attestation-quota.js");
+    
+    const result = checkQuota("paid", 10);
+    assert.equal(result.allowed, false);
+    assert.equal(result.remaining, 0);
+  });
+
+  it("should always deny free tier (limit=0)", async () => {
+    const { checkQuota } = await import("../src/attestation-quota.js");
+    
+    const result = checkQuota("free", 0);
+    assert.equal(result.allowed, false);
+    assert.equal(result.limit, 0);
+  });
+
+  it("should allow up to 25 for pro tier", async () => {
+    const { checkQuota } = await import("../src/attestation-quota.js");
+    
+    const atLimit = checkQuota("pro", 24);
+    assert.equal(atLimit.allowed, true);
+    
+    const overLimit = checkQuota("pro", 25);
+    assert.equal(overLimit.allowed, false);
+  });
+
+  it("should build error with correct message and upgrade URL", async () => {
+    const { checkQuota, buildQuotaExceededError } = await import("../src/attestation-quota.js");
+    
+    const result = checkQuota("paid", 5);
+    const error = buildQuotaExceededError(result);
+    
+    assert.equal(error.code, "QUOTA_EXCEEDED");
+    assert.ok(error.message.includes("Paid"));
+    assert.ok(error.message.includes("5"));
+    assert.ok(error.message.includes("Pro"));
+    assert.equal(error.upgradeUrl, "/pricing");
+    assert.equal(error.tier, "paid");
+    assert.equal(error.limit, 5);
+    assert.equal(error.used, 5);
+    assert.ok(error.resetDate);
+  });
+});
+
+describe("Attestation Usage Tracking", () => {
+  it("should track and increment usage per API key", async () => {
+    const { store } = await import("../src/store.js");
+    
+    const testKey = "test_quota_" + Date.now();
+    
+    const initial = await store.getAttestationUsage(testKey);
+    assert.equal(initial, 0);
+    
+    const after1 = await store.incrementAttestationUsage(testKey);
+    assert.equal(after1, 1);
+    
+    const after2 = await store.incrementAttestationUsage(testKey);
+    assert.equal(after2, 2);
+    
+    const current = await store.getAttestationUsage(testKey);
+    assert.equal(current, 2);
+  });
+
+  it("should track usage separately per API key", async () => {
+    const { store } = await import("../src/store.js");
+    
+    const key1 = "test_key1_" + Date.now();
+    const key2 = "test_key2_" + Date.now();
+    
+    await store.incrementAttestationUsage(key1);
+    await store.incrementAttestationUsage(key1);
+    await store.incrementAttestationUsage(key2);
+    
+    const usage1 = await store.getAttestationUsage(key1);
+    const usage2 = await store.getAttestationUsage(key2);
+    
+    assert.equal(usage1, 2);
+    assert.equal(usage2, 1);
+  });
+});

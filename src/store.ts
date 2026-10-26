@@ -3,17 +3,21 @@ import { join, dirname } from "path";
 import { tmpdir } from "os";
 import { v4 as uuid } from "uuid";
 import { Attestation, AttestationStatus, ApiKey, Tier, Webhook } from "./types.js";
+import { getCurrentMonthKey } from "./attestation-quota.js";
 
 const DATA_DIR = process.env.DATA_DIR || "data";
 const ATTESTATIONS_PATH = join(DATA_DIR, "attestations.json");
 const API_KEYS_PATH = join(DATA_DIR, "api-keys.json");
 const WEBHOOKS_PATH = join(DATA_DIR, "webhooks.json");
+const ATTESTATION_USAGE_PATH = join(DATA_DIR, "attestation-usage.json");
 
 interface PersistedData {
   attestations: Record<string, Attestation>;
   txHashIndex: Record<string, string>;
   apiKeys: Record<string, ApiKey>;
   webhooks: Record<string, Webhook>;
+  /** Attestation usage per API key per month: { "apiKey:YYYY-MM": count } */
+  attestationUsage: Record<string, number>;
 }
 
 interface StoreHealth {
@@ -39,6 +43,10 @@ interface Store {
   getWebhook(id: string): Promise<Webhook | undefined>;
   removeWebhook(id: string): Promise<boolean>;
   getHealth(): StoreHealth;
+  /** Get monthly attestation count for an API key in the current billing month */
+  getAttestationUsage(apiKey: string): Promise<number>;
+  /** Increment monthly attestation count for an API key */
+  incrementAttestationUsage(apiKey: string): Promise<number>;
 }
 
 function atomicWriteFileSync(path: string, data: string): void {
@@ -70,7 +78,7 @@ class JsonFileStore implements Store {
     if (!existsSync(DATA_DIR)) {
       mkdirSync(DATA_DIR, { recursive: true });
     }
-    const empty: PersistedData = { attestations: {}, txHashIndex: {}, apiKeys: {}, webhooks: {} };
+    const empty: PersistedData = { attestations: {}, txHashIndex: {}, apiKeys: {}, webhooks: {}, attestationUsage: {} };
     try {
       const attestationsRaw = this.readJson(ATTESTATIONS_PATH) || {};
       const attestations = attestationsRaw as Record<string, Attestation>;
@@ -80,8 +88,9 @@ class JsonFileStore implements Store {
       }
       const apiKeys = (this.readJson(API_KEYS_PATH) || {}) as Record<string, ApiKey>;
       const webhooks = (this.readJson(WEBHOOKS_PATH) || {}) as Record<string, Webhook>;
+      const attestationUsage = (this.readJson(ATTESTATION_USAGE_PATH) || {}) as Record<string, number>;
       this.lastError = undefined;
-      return { attestations, txHashIndex, apiKeys, webhooks };
+      return { attestations, txHashIndex, apiKeys, webhooks, attestationUsage };
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
       return empty;
@@ -98,6 +107,7 @@ class JsonFileStore implements Store {
       atomicWriteFileSync(ATTESTATIONS_PATH, JSON.stringify(this.data.attestations, null, 2));
       atomicWriteFileSync(API_KEYS_PATH, JSON.stringify(this.data.apiKeys, null, 2));
       atomicWriteFileSync(WEBHOOKS_PATH, JSON.stringify(this.data.webhooks, null, 2));
+      atomicWriteFileSync(ATTESTATION_USAGE_PATH, JSON.stringify(this.data.attestationUsage, null, 2));
       this.lastError = undefined;
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
@@ -219,6 +229,21 @@ class JsonFileStore implements Store {
     return exists;
   }
 
+  async getAttestationUsage(apiKey: string): Promise<number> {
+    const monthKey = getCurrentMonthKey();
+    const usageKey = `${apiKey}:${monthKey}`;
+    return this.data.attestationUsage[usageKey] || 0;
+  }
+
+  async incrementAttestationUsage(apiKey: string): Promise<number> {
+    const monthKey = getCurrentMonthKey();
+    const usageKey = `${apiKey}:${monthKey}`;
+    const current = this.data.attestationUsage[usageKey] || 0;
+    this.data.attestationUsage[usageKey] = current + 1;
+    this.syncPersist();
+    return current + 1;
+  }
+
   getData(): PersistedData {
     return this.data;
   }
@@ -286,6 +311,15 @@ class PostgresStore implements Store {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_webhooks_attestation ON webhooks(attestation_id);
+    `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS attestation_usage (
+        api_key VARCHAR(100) NOT NULL,
+        month_key VARCHAR(7) NOT NULL,
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (api_key, month_key)
+      );
     `);
   }
 
@@ -469,6 +503,28 @@ class PostgresStore implements Store {
   async removeWebhook(id: string): Promise<boolean> {
     const result = await this.pool.query(`DELETE FROM webhooks WHERE id = $1`, [id]);
     return result.rowCount > 0;
+  }
+
+  async getAttestationUsage(apiKey: string): Promise<number> {
+    const monthKey = getCurrentMonthKey();
+    const result = await this.pool.query(
+      `SELECT usage_count FROM attestation_usage WHERE api_key = $1 AND month_key = $2`,
+      [apiKey, monthKey]
+    );
+    return result.rows[0]?.usage_count || 0;
+  }
+
+  async incrementAttestationUsage(apiKey: string): Promise<number> {
+    const monthKey = getCurrentMonthKey();
+    const result = await this.pool.query(
+      `INSERT INTO attestation_usage (api_key, month_key, usage_count)
+       VALUES ($1, $2, 1)
+       ON CONFLICT (api_key, month_key)
+       DO UPDATE SET usage_count = attestation_usage.usage_count + 1
+       RETURNING usage_count`,
+      [apiKey, monthKey]
+    );
+    return result.rows[0].usage_count;
   }
 }
 
