@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import { loadLandingHtml } from "./landing.js";
 import routes from "./routes.js";
 
 const app = express();
@@ -31,8 +32,13 @@ app.use((req, _res, next) => {
   next();
 });
 
+// Public landing page interpolates X402_FLOOR_USD / X402_CAP_USD into the Pay as you go card.
+app.get(["/", "/index.html"], (_req, res) => {
+  res.type("html").send(loadLandingHtml());
+});
+
 // Serve static files (landing page, assets)
-app.use(express.static(path.join(__dirname, "..", "public")));
+app.use(express.static(path.join(__dirname, "..", "public"), { index: false }));
 
 // Stripe webhook needs raw body (before JSON parser)
 app.post("/webhooks/stripe", express.raw({ type: "application/json" }), async (req, res) => {

@@ -70,8 +70,9 @@ nav .nav-links a:hover{color:#e2e8f0}
 .demo-box .view-link a:hover{text-decoration:underline}
 
 /* Pricing */
-.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2rem;max-width:960px;margin:0 auto}
-.price-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2.5rem 2rem;text-align:center;position:relative}
+.pricing-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1.5rem;max-width:1120px;margin:0 auto}
+.price-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2.5rem 2rem;text-align:center;position:relative;display:flex;flex-direction:column}
+.price-card a.btn{margin-top:auto}
 .price-card.featured{border-color:#818cf8;box-shadow:0 4px 24px rgba(99,102,241,0.15)}
 .price-card.popular::before{content:"Most Popular";position:absolute;top:-0.6rem;left:50%;transform:translateX(-50%);background:#818cf8;color:#0f172a;font-size:0.7rem;font-weight:600;padding:0.2rem 1rem;border-radius:4px;text-transform:uppercase;letter-spacing:0.05em}
 .price-card h3{font-size:1.1rem;margin-bottom:0.5rem;color:#f1f5f9}
@@ -94,9 +95,13 @@ footer{border-top:1px solid #1e293b;padding:3rem 1.5rem;text-align:center;color:
 footer a{color:#818cf8;text-decoration:none}
 footer a:hover{text-decoration:underline}
 
+@media(max-width:1024px){
+  .pricing-grid{grid-template-columns:repeat(2,minmax(0,1fr));max-width:720px}
+}
 @media(max-width:768px){
   .hero h1{font-size:2rem}
   .steps,.use-grid,.pricing-grid{grid-template-columns:1fr}
+  .pricing-grid{max-width:400px}
   nav .nav-links{display:none}
 }
 </style>
@@ -235,6 +240,18 @@ footer a:hover{text-decoration:underline}
         <li>Priority support</li>
       </ul>
       <a href="/signup?plan=pro" class="btn btn-primary" style="width:100%">Subscribe</a>
+    </div>
+    <div class="price-card">
+      <h3>Pay as you go</h3>
+      <div class="price"><span>from</span> ${{X402_FLOOR_USD}}<span> per attestation</span></div>
+      <p class="desc">For AI agents and one-off checks</p>
+      <ul>
+        <li>No account or subscription</li>
+        <li>Pay in RLUSD or XRP on the XRP Ledger (x402)</li>
+        <li>Price tracks the Flare (FLR) fee, capped at ${{X402_CAP_USD}}</li>
+        <li>Built for agents: MCP at xrp-link.com/mcp</li>
+      </ul>
+      <a href="/docs#x402" class="btn btn-outline" style="width:100%">Pay per attestation</a>
     </div>
   </div>
   <p style="text-align:center;margin-top:2rem;color:#64748b;font-size:0.85rem">
