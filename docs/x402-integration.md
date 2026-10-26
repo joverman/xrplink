@@ -1,136 +1,85 @@
-# XRPLink x402 Integration Plan
+# XRPLink x402 Pay-Per-Attestation
 
-## Overview
+AI agents can attest an XRP payment without a subscription by paying once on the XRP Ledger using the [x402](https://docs.x402.org) protocol and the hosted XRPL facilitator at `https://xrpl-facilitator-mainnet.t54.ai` (XRP or RLUSD).
 
-XRPLink will use Cloudflare's Monetization Gateway + the x402 protocol to enable **agent-native pay-per-attestation pricing**. AI agents pay for each XRP payment verification autonomously via stablecoin micropayments, with no API key, signup, or billing infrastructure required.
+The earlier Cloudflare Monetization Gateway plan at a flat **$0.01** is retired. Each Flare mainnet attestation costs the operator **20 FLR** (about **$0.14** in mid-October 2026). A one-cent price loses money. Pricing is now FLR-linked and floored.
 
-## Pricing Model
+## When payment is required
 
-| Resource | Price | Method | Notes |
-|----------|-------|--------|-------|
-| `verify_xrp_payment` (MCP tool) | $0.01 | x402 | Covers FDC attestation fee + gas |
-| `POST /api/v1/verify/xrp-payment` | $0.01 | x402 | Same via REST |
-| `get_attestation_status` | Free | — | Status checks always free |
-| `lookup_attestation_by_tx` | Free | — | Lookups always free |
-| `get_server_info` | Free | — | Server info always free |
-| `GET /health` | Free | — | Always free |
+| Caller | Result |
+|--------|--------|
+| Subscription API key **inside** monthly quota | Attest as before. Never asked to pay. |
+| No API key | HTTP **402** with x402 `PAYMENT-REQUIRED` (REST) or an MCP tool error containing the same quote |
+| Invalid API key | Same 402 quote (REST). MCP still never returns HTTP 403. |
+| Key **over quota** | 402 quote (plus quota details). Pay once or wait for the billing-period reset. |
+| Cached / already-on-chain attestation | Free. No quota, no x402. |
 
-## Architecture
+Status, lookup, health, `initialize`, and `tools/list` stay free. `/mcp` never returns HTTP 403 for auth (Smithery/Glama treat 403 as a dead server).
 
-```
-                    ┌─────────────────────────────────┐
-                    │         Cloudflare               │
-                    │    Monetization Gateway          │
-                    │  (verifies x402 payments)        │
-                    └──────────┬──────────────────────┘
-                               │
-                    ┌──────────▼──────────────────────┐
-                    │     XRPLink Server                │
-                    │                                  │
-                    │  MCP Server (primary)             │
-                    │  REST API (sidecar)               │
-                    │  FDC Service                      │
-                    └──────────────────────────────────┘
-```
-
-## Payment Flow (x402)
+## Pricing
 
 ```
-Agent                              XRPLink                      Cloudflare MG
-  │                                   │                              │
-  │── POST /api/v1/verify/xrp-payment ──▶                          │
-  │    { txHash: "0x..." }                                         │
-  │                                   │                              │
-  │◀── 402 Payment Required ──────────│                              │
-  │    { price: "0.01",                                             │
-  │      asset: "USDC",                                             │
-  │      address: "0x..." }                                        │
-  │                                   │                              │
-  │── POST (with x402 payment proof) ──▶                          │
-  │                                   │                              │
-  │                                   │── verify payment ──────────▶│
-  │                                   │◀── verified ───────────────│
-  │                                   │                              │
-  │                                   │── submit attestation ──▶     │
-  │                                   │    to FdcHub                 │
-  │                                   │                              │
-  │◀── 202 Accepted ──────────────────│                              │
-  │    { id: "...", roundId: 1234 }                                 │
-  │                                   │                              │
-  │── GET /api/v1/status/:id ────────▶                              │
-  │    (poll until verified)                                        │
-  │◀── { status: "verified", proof } ──│                            │
+price_usd = max(FLOOR_USD, ATTESTATION_FEE_FLR × FLR_USD × MARKUP)
 ```
 
-## Implementation Steps
+Defaults (all overridable via env):
 
-### 1. Join Monetization Gateway Waitlist
-- URL: https://docs.google.com/forms/d/e/1FAIpQLSfq6yaIgp57FCGFg7riXlSWTeD8d8Adur2c8tWaKY4SuzweiQ/viewform
-- Cloudflare account needed
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `ATTESTATION_FEE_FLR` | `20` | FLR sent to FdcHub per mainnet attestation |
+| `X402_FLOOR_USD` | `0.50` | Never charge less than this |
+| `X402_MARKUP` | `3` | Multiplier on FLR cost in USD |
+| `X402_PRICE_CACHE_TTL_MS` | `300000` | FTSO cache (5 minutes) |
 
-### 2. Deploy XRPLink behind Cloudflare
-- Point domain to Cloudflare
-- Configure proxy (orange cloud)
-- Set up WAF rules to protect API
+FLR/USD and XRP/USD come from Flare's on-chain FTSO (`FtsoV2` via ContractRegistry). A stale cache is the only fallback. If there is no cache and the feed fails, pay-per-use **fails closed**: no quote, no attestation (`503 PRICE_UNAVAILABLE`). Subscription keys inside quota are unaffected.
 
-### 3. Configure Payment Rules
-Using the Monetization Gateway API, set rules like:
+**Example (mid-Oct 2026):** 20 FLR ≈ $0.14, markup 3 → $0.42, floor $0.50. Quote is **$0.50**. At XRP = $2 that is **250,000 drops** (0.25 XRP). RLUSD amount is the USD price as an issued-currency decimal (`"0.5"`).
 
-```
-# Rule 1: Charge for MCP verify tool
-match: request.path == "/api/v1/verify/xrp-payment"
-action: require_payment(amount=0.01, asset="USDC")
+XRP amounts are integer drops (`ceil`). RLUSD uses the XRPL issued-currency decimal string (not integer minor units).
 
-# Rule 2: Charge for MCP tool call matching verify
-match: request.method == "POST" && request.path == "/mcp" 
-  && body.contains("verify_xrp_payment")
-action: require_payment(amount=0.01, asset="USDC")
+## x402 flow (XRPL exact scheme, v2)
 
-# Rule 3: Free for all other endpoints  
-match: true
-action: allow
-```
+Facilitator: `XRPL_FACILITATOR_URL` (default `https://xrpl-facilitator-mainnet.t54.ai`), network `XRPL_NETWORK` (default `xrpl:0` mainnet).
 
-### 4. Add x402 Response Headers to Server
-When XRPLink receives a request without payment, return:
+1. Agent `POST /api/v1/verify/xrp-payment` with `{ "txHash": "..." }` and no payment.
+2. Server returns **402** with header `PAYMENT-REQUIRED` (base64 JSON) and the same object in the body.
+3. `accepts` lists `exact` requirements for native **XRP** and, if `X402_RLUSD_ISSUER` is set, **RLUSD**. Each entry has `payTo` from `X402_PAY_TO_ADDRESS`, `extra.areFeesSponsored=false`, `extra.assetTransferMethod=sequence`, and a unique `extra.invoiceId` bound to that `txHash`.
+4. Agent signs an XRPL `Payment` (payer pays the XRPL fee; invoice binding is `InvoiceID = SHA-256(invoiceId)`).
+5. Agent retries with `PAYMENT-SIGNATURE` (base64 `PaymentPayload`).
+6. Server looks up the stored quote, calls facilitator **`/verify` then `/settle`**, and only then submits to FDC.
+7. Success: HTTP **202** plus `PAYMENT-RESPONSE`. One settled payment = one attestation.
 
-```
-HTTP/1.1 402 Payment Required
-X-402-Price: 0.01
-X-402-Asset: USDC
-X-402-Address: 0x...
-Content-Type: application/json
+MCP `verify_xrp_payment` uses the same quotes. Unpaid calls return a JSON-RPC **tool error** (HTTP 200) that embeds `paymentRequired`. Retry the tool call with `PAYMENT-SIGNATURE`. Discovery (`initialize`, `tools/list`) stays unauthenticated.
 
-{ "error": "PAYMENT_REQUIRED",
-  "message": "Payment of $0.01 USDC required",
-  "payment": { "price": 0.01, "asset": "USDC", "address": "..." } }
-```
+## Idempotency and failed FDC
 
-### 5. Future: MCP Tool-Level Pricing
-Extend pricing to individual MCP tools:
+- Reusing a payment after a successful FDC submit is rejected (`409 PAYMENT_REPLAY` on REST).
+- A payment is bound to one `txHash`; it cannot buy a different attestation.
+- **Settle happens before FDC.** If FDC submit fails after settlement, the invoice is marked `fdc_failed`. The agent should **retry the same request with the same `PAYMENT-SIGNATURE`**. The server resubmits to FDC and does **not** settle again. The 500 body includes `retryWithoutRepayment: true` and the invoice id.
+
+Quotes expire after 10 minutes. Ask for a new 402 if the quote is gone.
+
+## What the operator must configure
+
+Never hardcode a receiving wallet. Set these in the environment:
 
 ```
-# xrplink://pricing resource
-Tool: verify_xrp_payment — $0.01
-Tool: get_attestation_status — free
-Tool: lookup_attestation_by_tx — free
-Tool: get_server_info — free
+X402_ENABLED=true
+X402_PAY_TO_ADDRESS=r...          # your XRPL classic address (required for pay-per-use)
+XRPL_FACILITATOR_URL=https://xrpl-facilitator-mainnet.t54.ai
+XRPL_NETWORK=xrpl:0
+X402_RLUSD_ISSUER=rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De   # optional; omit to accept XRP only
+X402_FLOOR_USD=0.50
+X402_MARKUP=3
+ATTESTATION_FEE_FLR=20
 ```
 
-## Benefits
+For facilitator testnet: `XRPL_FACILITATOR_URL=https://xrpl-facilitator-testnet.t54.ai` and `XRPL_NETWORK=xrpl:1`.
 
-| Stakeholder | Benefit |
-|-------------|---------|
-| **AI Agents** | Pay per call, no signup, no API key management |
-| **Developers** | No billing code, Cloudflare handles payments |
-| **XRPLink** | Revenue per attestation, scales with usage |
-| **Flare** | More FDC usage, proven protocol value |
+Subscription prices ($29 / $99) are unchanged.
 
-## Revenue Model
+## References
 
-At $0.01 per attestation:
-- 100 attestations/day = $1/day = ~$30/month
-- 1,000 attestations/day = $10/day = ~$300/month
-- 10,000 attestations/day = $100/day = ~$3,000/month
-
-Break-even at ~100 attestations/day (covers FDC fees + server costs).
+- [x402 docs](https://docs.x402.org)
+- [XRPL x402 facilitator](https://xrpl-x402.t54.ai/)
+- MCP Registry listing (not published from this change): `server.json` + `PUBLISHING.md`

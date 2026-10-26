@@ -8,7 +8,7 @@ import { formatError } from "./errors.js";
 export const tools: Tool[] = [
   {
     name: "verify_xrp_payment",
-    description: "Submit an XRP transaction hash for FDC attestation verification on the Flare network. Returns immediately with an attestation ID; actual verification takes ~90-180 seconds. Use get_attestation_status to check the result.",
+    description: "Submit an XRP transaction hash for FDC attestation on Flare. Subscription API keys inside quota are not charged extra. Without a key, or over quota, the tool returns an x402 payment challenge (XRP or RLUSD via the XRPL facilitator). A valid PAYMENT-SIGNATURE pays for exactly one attestation. Status checks are free. Proof takes ~90-180 seconds; use get_attestation_status.",
     inputSchema: {
       type: "object",
       properties: {

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.joverman/xrplink",
+  "title": "XRPLink",
+  "description": "Verify XRP payments on Flare FDC. Agents subscribe or pay per attestation via x402 on XRPL.",
+  "repository": {
+    "url": "https://github.com/joverman/xrplink",
+    "source": "github"
+  },
+  "version": "0.3.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://xrp-link.com/mcp"
+    }
+  ]
+}

@@ -1,11 +1,12 @@
 /**
- * MCP HTTP Server - Remote agent endpoint using Streamable HTTP transport.
- * 
- * This module provides a remote MCP endpoint that:
- * - Uses the Streamable HTTP transport (POST/GET to /mcp)
- * - Requires X-API-Key for tools that trigger attestations (verify_xrp_payment)
- * - Applies the same quota limits as the REST API
- * - Allows read-only tools (status, lookup, server info) without a key
+ * MCP HTTP Server - remote agents via Streamable HTTP.
+ *
+ * Auth rules (scanners such as Smithery and Glama treat HTTP 403 as a failure):
+ * - initialize, tools/list, resources, prompts, and read-only tools work without a key
+ * - /mcp never returns 403 for auth
+ * - verify_xrp_payment without a key or payment returns a JSON-RPC tool error
+ *   (HTTP 200) that includes x402 payment requirements when pay-per-use is configured
+ * - crawler user agents are not blocked
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -20,9 +21,7 @@ import {
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Request, Response } from "express";
 
-import { config } from "../config.js";
 import { store } from "../store.js";
-import { userStore } from "../user-store.js";
 import {
   tools,
   handleGetAttestationStatus,
@@ -32,151 +31,81 @@ import {
 } from "./tools.js";
 import { getResources, readResource } from "./resources.js";
 import { getPromptDefs, getPromptContent } from "./prompts.js";
-import { formatError } from "./errors.js";
-import * as fdc from "../fdc-service.js";
-import {
-  checkQuota,
-  buildQuotaExceededError,
-  BillingPeriod,
-  getFallbackBillingPeriod,
-  getBillingPeriodKey,
-} from "../attestation-quota.js";
+import { attestXrpPayment } from "../attest.js";
 
 const SERVER_NAME = "xrplink-mcp";
 const SERVER_VERSION = "0.3.0";
 
-const READ_ONLY_TOOLS = new Set([
-  "get_attestation_status",
-  "lookup_attestation_by_tx",
-  "get_attestation_by_round",
-  "get_server_info",
-]);
-
 interface McpRequestContext {
   apiKey?: string;
   apiKeyRecord?: Awaited<ReturnType<typeof store.getApiKey>>;
+  paymentSignature?: string;
 }
 
 let requestContext: McpRequestContext = {};
 
-async function handleVerifyXrpPaymentWithAuth(args: Record<string, unknown>) {
-  const txHash = args.txHash as string;
-  const cleanHash = txHash.replace(/^0x/i, "").toUpperCase();
-
-  if (!/^[0-9A-F]{64}$/.test(cleanHash)) {
-    const err = formatError("INVALID_TX_HASH");
-    return { isError: true, content: [{ type: "text" as const, text: `${err.message}\n\n${err.suggestedAction}` }] };
-  }
-
-  const apiKey = requestContext.apiKeyRecord;
-  if (!apiKey) {
-    return {
-      isError: true,
-      content: [{
-        type: "text" as const,
-        text: "API key required. Provide X-API-Key header to create attestations.\n\nRead-only tools (get_attestation_status, lookup_attestation_by_tx, get_server_info) don't require a key.",
-      }],
-    };
-  }
-
-  const cached = await store.getByTxHash(cleanHash);
-  if (cached) {
-    return {
-      content: [{ type: "text" as const, text: `Attestation already ${cached.status}\n\n${JSON.stringify({ id: cached.id, txHash: cleanHash, roundId: cached.roundId, status: cached.status, verifiedTxHash: cached.verifiedTxHash, cached: true }, null, 2)}` }],
-    };
-  }
-
-  if (config.paymentVerifierAddress) {
-    try {
-      if (await fdc.isAlreadyVerified(cleanHash)) {
-        const record = await store.createAttestation(cleanHash);
-        await store.updateAttestation(record.id, { status: "verified" });
-        return { content: [{ type: "text" as const, text: `Transaction already verified on-chain\n\n${JSON.stringify({ id: record.id, txHash: cleanHash, status: "verified" }, null, 2)}` }] };
-      }
-    } catch {}
-  }
-
-  const isMainnet = config.network === "flare";
-  let billingPeriod: BillingPeriod | null = null;
-
-  if (isMainnet) {
-    const apiKeyOwner = userStore.findByApiKey(apiKey.key);
-
-    if (apiKeyOwner && apiKeyOwner.billingPeriodStart && apiKeyOwner.billingPeriodEnd) {
-      billingPeriod = {
-        start: apiKeyOwner.billingPeriodStart,
-        end: apiKeyOwner.billingPeriodEnd,
-      };
-    } else if (apiKeyOwner) {
-      billingPeriod = getFallbackBillingPeriod(apiKeyOwner.createdAt);
-    } else {
-      billingPeriod = getFallbackBillingPeriod(apiKey.createdAt);
-    }
-
-    const periodKey = getBillingPeriodKey(billingPeriod);
-    const currentUsage = await store.getAttestationUsage(apiKey.key, periodKey);
-    const quotaCheck = checkQuota(apiKey.tier, currentUsage, billingPeriod);
-
-    if (!quotaCheck.allowed) {
-      const error = buildQuotaExceededError(quotaCheck);
-      return {
-        isError: true,
-        content: [{ type: "text" as const, text: `${error.message}\n\nCode: ${error.code}\nLimit: ${error.limit}\nUsed: ${error.used}\nReset: ${error.resetDate}` }],
-      };
-    }
-  }
-
-  const attestation = await store.createAttestation(cleanHash);
-
-  try {
-    const proofOwner = fdc.getProofOwner();
-    const abiEncoded = await fdc.prepareRequest(cleanHash, proofOwner);
-    await store.updateAttestation(attestation.id, { abiEncodedRequest: abiEncoded });
-
-    const { roundId } = await fdc.submitRequest(abiEncoded);
-    await store.updateAttestation(attestation.id, { roundId, status: "pending" });
-
-    if (isMainnet && billingPeriod) {
-      const periodKey = getBillingPeriodKey(billingPeriod);
-      await store.incrementAttestationUsage(apiKey.key, periodKey);
-    }
-
-    pollForProof(attestation.id, roundId, abiEncoded).catch((err) => {
-      console.error(`MCP poll failed for ${attestation.id}:`, err.message);
-    });
-
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({
-        id: attestation.id, txHash: cleanHash, roundId, status: "pending",
-        message: `Submitted to voting round ${roundId}. Use get_attestation_status in ~90 seconds to check.`,
-      }, null, 2) }],
-    };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    await store.updateAttestation(attestation.id, { status: "failed", error: message });
-    return { isError: true, content: [{ type: "text" as const, text: `Submission failed: ${message}` }] };
-  }
+function toolError(text: string) {
+  return { isError: true, content: [{ type: "text" as const, text }] };
 }
 
-async function pollForProof(id: string, roundId: number, abiEncoded: string, attempt = 1) {
-  await new Promise((r) => setTimeout(r, config.pollIntervalMs));
-  try {
-    const proofData = await fdc.fetchProof(roundId, abiEncoded);
-    if (!proofData) {
-      if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-      await store.updateAttestation(id, { status: "not_found", error: "Proof not found after max poll attempts" });
-      return;
-    }
-    await store.updateAttestation(id, { proof: proofData, status: "ready" });
-    if (config.paymentVerifierAddress) {
-      const verifiedTxHash = await fdc.verifyProofOnChain(proofData, config.paymentVerifierAddress);
-      await store.updateAttestation(id, { verifiedTxHash, status: "verified" });
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-    await store.updateAttestation(id, { status: "failed", error: message });
+function toolOk(payload: unknown) {
+  const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  return { content: [{ type: "text" as const, text }] };
+}
+
+async function handleVerifyXrpPaymentWithAuth(args: Record<string, unknown>) {
+  const result = await attestXrpPayment({
+    txHash: args.txHash as string,
+    apiKeyHeader: requestContext.apiKey,
+    apiKeyRecord: requestContext.apiKeyRecord,
+    paymentSignature: requestContext.paymentSignature,
+  });
+
+  if (result.kind === "ok") {
+    const extra =
+      result.body.status === "pending"
+        ? { message: `Submitted to voting round ${result.body.roundId}. Use get_attestation_status in ~90 seconds to check.` }
+        : {};
+    return toolOk({ ...result.body, ...extra });
   }
+
+  if (result.kind === "payment_required") {
+    return toolError(
+      [
+        result.body.message,
+        "",
+        "This is an x402 Payment Required challenge. Sign an XRPL Payment for one of the accepts entries and retry with a PAYMENT-SIGNATURE header.",
+        "",
+        JSON.stringify(
+          {
+            code: result.body.code,
+            paymentRequired: result.body.paymentRequired,
+            priceUsd: result.body.priceUsd,
+            priceXrp: result.body.priceXrp,
+            priceRlusd: result.body.priceRlusd,
+            limit: result.body.limit,
+            used: result.body.used,
+            resetDate: result.body.resetDate,
+          },
+          null,
+          2
+        ),
+      ].join("\n")
+    );
+  }
+
+  const rawMessage = String(result.body.message || result.body.error || "Request failed");
+  const code = result.body.code || result.body.error;
+  const message =
+    code === "MISSING_API_KEY" || code === "INVALID_API_KEY"
+      ? `API key required. ${rawMessage}`
+      : rawMessage;
+  const extras: string[] = [];
+  if (code) extras.push(`Code: ${code}`);
+  if (result.body.limit !== undefined) extras.push(`Limit: ${result.body.limit}`);
+  if (result.body.used !== undefined) extras.push(`Used: ${result.body.used}`);
+  if (result.body.resetDate) extras.push(`Reset: ${result.body.resetDate}`);
+  return toolError(extras.length ? `${message}\n\n${extras.join("\n")}` : message);
 }
 
 const toolHandlers: Record<string, (args: Record<string, unknown>) => Promise<any>> = {
@@ -196,23 +125,10 @@ function createMcpServer(): Server {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
-    const toolName = req.params.name;
-
-    if (!READ_ONLY_TOOLS.has(toolName) && !requestContext.apiKeyRecord) {
-      return {
-        isError: true,
-        content: [{
-          type: "text" as const,
-          text: `API key required for ${toolName}. Include X-API-Key header.\n\nTools that don't require a key: ${Array.from(READ_ONLY_TOOLS).join(", ")}`,
-        }],
-      };
-    }
-
-    const handler = toolHandlers[toolName];
+    const handler = toolHandlers[req.params.name];
     if (!handler) {
-      return { isError: true, content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }] };
+      return toolError(`Unknown tool: ${req.params.name}`);
     }
-
     return handler(req.params.arguments || {});
   });
 
@@ -253,9 +169,11 @@ function createMcpServer(): Server {
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
 export async function handleMcpRequest(req: Request, res: Response) {
+  // Never 403. Invalid keys are treated as unauthenticated; tools decide what to do.
   const apiKeyHeader = req.headers["x-api-key"] as string | undefined;
+  const paymentSignature = req.headers["payment-signature"] as string | undefined;
 
-  requestContext = { apiKey: apiKeyHeader };
+  requestContext = { apiKey: apiKeyHeader, paymentSignature };
   if (apiKeyHeader) {
     const apiKeyRecord = await store.getApiKey(apiKeyHeader);
     if (apiKeyRecord && apiKeyRecord.active) {
@@ -268,17 +186,14 @@ export async function handleMcpRequest(req: Request, res: Response) {
   let transport: StreamableHTTPServerTransport;
 
   if (sessionId && transports.has(sessionId)) {
-    // Reuse existing session
     transport = transports.get(sessionId)!;
   } else if (req.method === "POST" && !sessionId) {
-    // New session - create transport with session ID generator
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
     });
     const server = createMcpServer();
     await server.connect(transport);
   } else if (req.method === "DELETE" && sessionId) {
-    // Session termination
     const existingTransport = transports.get(sessionId);
     if (existingTransport) {
       await existingTransport.close();
@@ -287,7 +202,6 @@ export async function handleMcpRequest(req: Request, res: Response) {
     res.status(200).json({ status: "session closed" });
     return;
   } else if (req.method === "GET") {
-    // Stateless GET for SSE notifications
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
@@ -301,8 +215,7 @@ export async function handleMcpRequest(req: Request, res: Response) {
   const nodeReq = req as unknown as IncomingMessage & { auth?: any };
   const nodeRes = res as unknown as ServerResponse;
   await transport.handleRequest(nodeReq, nodeRes, req.body);
-  
-  // After handleRequest, check if this created a new session and store it
+
   const newSessionId = transport.sessionId;
   if (newSessionId && !transports.has(newSessionId)) {
     transports.set(newSessionId, transport);

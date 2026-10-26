@@ -2,26 +2,16 @@ import { Router, Request, Response } from "express";
 import express from "express";
 import { store } from "./store.js";
 import { config, activeNetwork } from "./config.js";
-import * as fdc from "./fdc-service.js";
-import { deliverWebhooks } from "./webhook-service.js";
 import { requireApiKey, requireAuth } from "./middleware.js";
 import { whiteLabel } from "./white-label.js";
 import { formatError } from "./mcp/errors.js";
 import { getPromptDefs, getPromptContent } from "./mcp/prompts.js";
 import { getResources, readResource } from "./mcp/resources.js";
 import {
-  AttestationStatus, VerifyResponse, StatusResponse,
-  RegisterWebhookBody, ApiError, Tier,
+  StatusResponse,
+  RegisterWebhookBody, Tier,
 } from "./types.js";
-import { 
-  checkQuota, 
-  buildQuotaExceededError, 
-  ATTESTATION_LIMITS, 
-  BillingPeriod,
-  getFallbackBillingPeriod,
-  getBillingPeriodKey,
-} from "./attestation-quota.js";
-import { userStore } from "./user-store.js";
+import { attestXrpPayment } from "./attest.js";
 
 const router = Router();
 
@@ -311,10 +301,10 @@ router.get("/docs", (_req: Request, res: Response) => {
 <pre><code>curl https://xrp-link.com/receipt/87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F</code></pre>
 
 <h2 id="attestation">Attestation</h2>
-<p>Attesting a payment generates the on-chain cryptographic proof. This requires an API key with a paid or pro plan. Proofs are ready in ~90-180 seconds (FDC voting round).</p>
+<p>Attesting a payment generates the on-chain cryptographic proof. Use a subscription API key (inside monthly quota) or pay per attestation with <strong>x402</strong> on the XRP Ledger (XRP or RLUSD). Proofs are ready in ~90-180 seconds (FDC voting round). Status lookups stay free.</p>
 
 <h3>Verify an XRP payment</h3>
-<div class="endpoint"><span class="method post">POST</span><span class="path">/api/v1/verify/xrp-payment</span><span class="badge api-key" style="margin-left:0.5rem">API key</span><div class="desc">Submits a transaction hash for attestation. Returns an attestation ID and FDC round.</div></div>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/api/v1/verify/xrp-payment</span><span class="badge api-key" style="margin-left:0.5rem">API key or x402</span><div class="desc">Submits a transaction hash for attestation. Subscribers inside quota skip payment. Otherwise the server returns HTTP 402 with x402 requirements; retry with PAYMENT-SIGNATURE after paying. One payment = one attestation.</div></div>
 <pre><code>curl -X POST https://xrp-link.com/api/v1/verify/xrp-payment \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: sk_live_..." \\
@@ -360,11 +350,11 @@ router.get("/docs", (_req: Request, res: Response) => {
 <p>XRPLink exposes an MCP server so AI agents can verify payments directly. Connect via stdio (local) or Streamable HTTP (remote).</p>
 
 <h3>Remote HTTP Endpoint</h3>
-<div class="endpoint"><span class="method post">POST</span><span class="path">/mcp</span><span class="badge api-key" style="margin-left:0.5rem">API key (for attestations)</span><div class="desc">Streamable HTTP transport. Include X-API-Key header for verify_xrp_payment.</div></div>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/mcp</span><span class="badge pub" style="margin-left:0.5rem">keyless discovery</span><div class="desc">Streamable HTTP. initialize, tools/list, and read-only tools work without a key (no HTTP 403). verify_xrp_payment accepts X-API-Key or x402 PAYMENT-SIGNATURE; unpaid calls return a tool error with payment requirements.</div></div>
 
 <table>
 <tr><th>Tool</th><th>Auth</th><th>Description</th></tr>
-<tr><td><code>verify_xrp_payment</code></td><td><span class="badge api-key">API key</span></td><td>Submit a txHash for attestation (costs FLR, counts against quota)</td></tr>
+<tr><td><code>verify_xrp_payment</code></td><td><span class="badge api-key">API key or x402</span></td><td>Submit a txHash for attestation (subscription quota or one x402 payment)</td></tr>
 <tr><td><code>get_attestation_status</code></td><td><span class="badge pub">keyless</span></td><td>Check attestation by UUID</td></tr>
 <tr><td><code>lookup_attestation_by_tx</code></td><td><span class="badge pub">keyless</span></td><td>Find attestation by txHash</td></tr>
 <tr><td><code>get_attestation_by_round</code></td><td><span class="badge pub">keyless</span></td><td>List attestations by round ID</td></tr>
@@ -398,9 +388,12 @@ npm run start:mcp</code></pre>
 
 <table>
 <tr><th>Code</th><th>HTTP</th><th>Meaning</th></tr>
-<tr><td><code>MISSING_API_KEY</code></td><td>401</td><td>X-API-Key header missing</td></tr>
-<tr><td><code>INVALID_API_KEY</code></td><td>403</td><td>API key invalid or deactivated</td></tr>
-<tr><td><code>QUOTA_EXCEEDED</code></td><td>402</td><td>Monthly attestation limit reached (includes reset date)</td></tr>
+<tr><td><code>MISSING_API_KEY</code></td><td>401</td><td>X-API-Key header missing and x402 not configured</td></tr>
+<tr><td><code>INVALID_API_KEY</code></td><td>401</td><td>API key invalid and x402 not configured</td></tr>
+<tr><td><code>PAYMENT_REQUIRED</code></td><td>402</td><td>x402 quote: pay XRP or RLUSD for one attestation</td></tr>
+<tr><td><code>QUOTA_EXCEEDED</code></td><td>402</td><td>Monthly attestation limit reached (includes x402 quote when pay-per-use is enabled)</td></tr>
+<tr><td><code>PAYMENT_REPLAY</code></td><td>409</td><td>That x402 payment was already used</td></tr>
+<tr><td><code>PRICE_UNAVAILABLE</code></td><td>503</td><td>FTSO price feed down; pay-per-use fails closed</td></tr>
 <tr><td><code>RATE_LIMITED</code></td><td>429</td><td>Per-minute limit exceeded for your tier</td></tr>
 <tr><td><code>INVALID_TX_HASH</code></td><td>400</td><td>Not a valid 64-hex transaction hash</td></tr>
 <tr><td><code>SUBMIT_FAILED</code></td><td>500</td><td>Attestation submission to FdcHub failed</td></tr>
@@ -564,14 +557,15 @@ ${baseUrl}
 
 ## Authentication
 
-- **API Key**: Include \`X-API-Key: sk_live_...\` header for attestation endpoints
+- **API Key**: Include \`X-API-Key: sk_live_...\` header for subscription attestations
+- **x402 pay-per-use**: No API key needed. POST without a key (or over quota) returns HTTP 402 with PAYMENT-REQUIRED. Pay in XRP or RLUSD on the XRP Ledger, then retry with PAYMENT-SIGNATURE. One payment = one attestation.
 - **Bearer Token**: Use \`Authorization: Bearer <token>\` for account/billing endpoints
 - Get an API key at ${baseUrl}/dashboard
 
 ## REST Endpoints
 
-### Attestation (requires API key)
-- POST /api/v1/verify/xrp-payment - Submit txHash for attestation
+### Attestation (API key or x402 payment)
+- POST /api/v1/verify/xrp-payment - Submit txHash for attestation. Subscribers inside quota skip payment. Otherwise HTTP 402 (x402).
 - GET /api/v1/status/:id - Check attestation status by UUID
 - GET /api/v1/status-by-tx/:txHash - Find attestation by txHash
 
@@ -586,7 +580,7 @@ ${baseUrl}/mcp
 Connect via Streamable HTTP transport (POST for requests, GET for SSE).
 
 ### Tools
-- verify_xrp_payment(txHash) - Create attestation (requires X-API-Key)
+- verify_xrp_payment(txHash) - Create attestation (X-API-Key inside quota, or x402 PAYMENT-SIGNATURE). Unauthenticated calls return a tool error with payment requirements, never HTTP 403.
 - get_attestation_status(id) - Check status (keyless)
 - lookup_attestation_by_tx(txHash) - Find by txHash (keyless)
 - get_attestation_by_round(roundId) - List by FDC round (keyless)
@@ -601,6 +595,8 @@ Connect via Streamable HTTP transport (POST for requests, GET for SSE).
 | Pro | $99/mo | 25 |
 
 Testnet (Coston2) has no limits.
+
+Pay-per-use (x402, no subscription): price_usd = max(FLOOR_USD, 20 FLR × FLR/USD × MARKUP). Defaults FLOOR_USD=0.50, MARKUP=3. Paid in XRP or RLUSD via https://xrpl-facilitator-mainnet.t54.ai. Subscribers inside quota are never asked to pay.
 
 ## Response Time
 
@@ -641,8 +637,8 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
         post: {
           tags: ["Attestation"],
           summary: "Verify an XRP payment",
-          description: "Submit an XRP transaction hash for FDC attestation. Returns immediately with an attestation ID; proof takes ~90-180 seconds.",
-          security: [{ ApiKeyAuth: [] }],
+          description: "Submit an XRP transaction hash for FDC attestation. Subscription API keys inside quota are not charged extra. Without a key or over quota, the server returns HTTP 402 with x402 payment requirements (XRP or RLUSD on the XRP Ledger). Retry with PAYMENT-SIGNATURE after paying. One payment authorizes exactly one attestation. Proof takes ~90-180 seconds.",
+          security: [{ ApiKeyAuth: [] }, { X402: [] }],
           requestBody: {
             required: true,
             content: {
@@ -664,9 +660,10 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
               content: { "application/json": { schema: { $ref: "#/components/schemas/VerifyResponse" } } },
             },
             "400": { description: "Invalid transaction hash", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-            "401": { description: "Missing API key", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-            "402": { description: "Quota exceeded", content: { "application/json": { schema: { $ref: "#/components/schemas/QuotaError" } } } },
-            "403": { description: "Invalid API key", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+            "401": { description: "Missing or invalid API key and x402 is not configured", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+            "402": { description: "x402 payment required, payment failed, or subscription quota exceeded (402 body includes paymentRequired when pay-per-use is enabled)", content: { "application/json": { schema: { $ref: "#/components/schemas/PaymentRequired" } } } },
+            "409": { description: "x402 payment replay rejected" },
+            "503": { description: "Price feed unavailable; pay-per-use fails closed" },
           },
         },
       },
@@ -727,10 +724,13 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
         post: {
           tags: ["MCP"],
           summary: "MCP Streamable HTTP endpoint",
-          description: "Model Context Protocol server endpoint. Supports tools, resources, and prompts for AI agent integration.",
-          parameters: [{ name: "X-API-Key", in: "header", schema: { type: "string" }, description: "API key for attestation tools" }],
+          description: "Model Context Protocol Streamable HTTP endpoint. initialize, tools/list, and read-only tools work without a key. verify_xrp_payment without payment returns a tool error (HTTP 200) with x402 requirements — never HTTP 403.",
+          parameters: [
+            { name: "X-API-Key", in: "header", schema: { type: "string" }, description: "Optional API key for subscription attestations" },
+            { name: "PAYMENT-SIGNATURE", in: "header", schema: { type: "string" }, description: "Optional x402 payment payload (base64) for pay-per-use" },
+          ],
           requestBody: { content: { "application/json": { schema: { type: "object" } } } },
-          responses: { "200": { description: "MCP response" } },
+          responses: { "200": { description: "MCP JSON-RPC or SSE response (never 403 for auth)" } },
         },
         get: {
           tags: ["MCP"],
@@ -787,6 +787,7 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
       securitySchemes: {
         ApiKeyAuth: { type: "apiKey", in: "header", name: "X-API-Key" },
         BearerAuth: { type: "http", scheme: "bearer" },
+        X402: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment payload (base64)" },
       },
       schemas: {
         VerifyResponse: {
@@ -837,6 +838,17 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
             upgradeUrl: { type: "string" },
           },
         },
+        PaymentRequired: {
+          type: "object",
+          properties: {
+            code: { type: "string", example: "PAYMENT_REQUIRED" },
+            message: { type: "string" },
+            paymentRequired: { type: "object", description: "x402 v2 PaymentRequired (also in PAYMENT-REQUIRED header, base64)" },
+            priceUsd: { type: "number" },
+            priceXrp: { type: "number" },
+            priceRlusd: { type: "string" },
+          },
+        },
       },
     },
   };
@@ -861,10 +873,12 @@ router.get("/.well-known/mcp.json", (_req: Request, res: Response) => {
       prompts: true,
     },
     authentication: {
-      type: "api-key",
+      type: "api-key-or-x402",
       header: "X-API-Key",
+      payment_header: "PAYMENT-SIGNATURE",
       required_for: ["verify_xrp_payment"],
       optional_for: ["get_attestation_status", "lookup_attestation_by_tx", "get_attestation_by_round", "get_server_info"],
+      notes: "Discovery (initialize, tools/list) is unauthenticated. Unpaid verify_xrp_payment returns a tool error with x402 requirements, never HTTP 403.",
     },
   });
 });
@@ -1540,103 +1554,30 @@ router.get("/mcp/prompts", (_req: Request, res: Response) => {
 
 // --- Authenticated routes ---
 
-router.post("/api/v1/verify/xrp-payment", requireApiKey, async (req: Request, res: Response) => {
+/**
+ * Verify XRP payment. Subscription API keys use monthly quota.
+ * Missing key, invalid key, or over-quota key can pay per attestation via x402
+ * (HTTP 402 + PAYMENT-REQUIRED). Subscribers inside quota are never asked to pay.
+ */
+router.post("/api/v1/verify/xrp-payment", async (req: Request, res: Response) => {
   const { txHash } = req.body;
-  const apiKey = (req as any).apiKey;
+  const result = await attestXrpPayment({
+    txHash,
+    apiKeyHeader: req.headers["x-api-key"] as string | undefined,
+    paymentSignature: req.headers["payment-signature"] as string | undefined,
+  });
 
-  if (!txHash || typeof txHash !== "string") {
-    return res.status(400).json(formatError("MISSING_TX_HASH", undefined, "txHash is required"));
+  if (result.kind === "payment_required") {
+    res.setHeader("PAYMENT-REQUIRED", result.paymentRequiredHeader);
+    return res.status(result.httpStatus).json(result.body);
   }
-
-  const cleanHash = txHash.replace(/^0x/i, "").toUpperCase();
-  if (!isHexTxHash(cleanHash)) {
-    return res.status(400).json(formatError("INVALID_TX_HASH"));
-  }
-
-  // Re-attesting an already-attested tx does not count against quota (cached result)
-  const cached = await store.getByTxHash(cleanHash);
-  if (cached) {
-    if (cached.status === "verified") {
-      return res.json({ id: cached.id, txHash: cleanHash, roundId: cached.roundId, status: cached.status, cached: true });
+  if (result.kind === "ok") {
+    if (result.paymentResponseHeader) {
+      res.setHeader("PAYMENT-RESPONSE", result.paymentResponseHeader);
     }
-    return res.json({ id: cached.id, txHash: cleanHash, roundId: cached.roundId, status: cached.status } satisfies VerifyResponse);
+    return res.status(result.httpStatus).json(result.body);
   }
-
-  // Check if already verified on-chain (no FLR cost, doesn't count against quota)
-  if (config.paymentVerifierAddress) {
-    try {
-      const alreadyVerified = await fdc.isAlreadyVerified(cleanHash);
-      if (alreadyVerified) {
-        const record = await store.createAttestation(cleanHash);
-        await store.updateAttestation(record.id, { status: "verified" });
-        return res.json({ id: record.id, txHash: cleanHash, roundId: null, status: "verified" } satisfies VerifyResponse);
-      }
-    } catch {}
-  }
-
-  // Check attestation quota BEFORE submitting to FDC (to avoid spending FLR)
-  // Only check when on mainnet (FLARE_NETWORK=flare) - testnet is uncapped
-  const isMainnet = config.network === "flare";
-  let billingPeriod: BillingPeriod | null = null;
-  
-  if (isMainnet) {
-    // Find the user who owns this API key to get their billing period
-    const apiKeyOwner = userStore.findByApiKey(apiKey.key);
-    
-    if (apiKeyOwner && apiKeyOwner.billingPeriodStart && apiKeyOwner.billingPeriodEnd) {
-      // Use Stripe billing period
-      billingPeriod = {
-        start: apiKeyOwner.billingPeriodStart,
-        end: apiKeyOwner.billingPeriodEnd,
-      };
-    } else if (apiKeyOwner) {
-      // Fallback: use 30-day rolling period anchored to account creation
-      billingPeriod = getFallbackBillingPeriod(apiKeyOwner.createdAt);
-    } else {
-      // No owner found - use API key creation date as anchor (edge case)
-      billingPeriod = getFallbackBillingPeriod(apiKey.createdAt);
-    }
-    
-    const periodKey = getBillingPeriodKey(billingPeriod);
-    const currentUsage = await store.getAttestationUsage(apiKey.key, periodKey);
-    const quotaCheck = checkQuota(apiKey.tier, currentUsage, billingPeriod);
-
-    if (!quotaCheck.allowed) {
-      const error = buildQuotaExceededError(quotaCheck);
-      return res.status(402).json(error);
-    }
-  }
-
-  const attestation = await store.createAttestation(cleanHash);
-
-  try {
-    const proofOwner = fdc.getProofOwner();
-    const abiEncoded = await fdc.prepareRequest(cleanHash, proofOwner);
-    await store.updateAttestation(attestation.id, { abiEncodedRequest: abiEncoded });
-
-    const { roundId, txHash: submitTxHash } = await fdc.submitRequest(abiEncoded);
-    await store.updateAttestation(attestation.id, { roundId, status: "pending" });
-
-    // Increment usage AFTER successful FDC submission (only on mainnet)
-    if (isMainnet && billingPeriod) {
-      const periodKey = getBillingPeriodKey(billingPeriod);
-      await store.incrementAttestationUsage(apiKey.key, periodKey);
-    }
-
-    console.log(`Attestation ${attestation.id}: submitted to round ${roundId} (tx: ${submitTxHash})`);
-
-    pollForProof(attestation.id, roundId, abiEncoded).catch((err) => {
-      console.error(`Polling failed for ${attestation.id}:`, err.message);
-      store.updateAttestation(attestation.id, { status: "failed", error: err.message });
-    });
-
-    return res.status(202).json({ id: attestation.id, txHash: cleanHash, roundId, status: "pending" } satisfies VerifyResponse);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    await store.updateAttestation(attestation.id, { status: "failed", error: message });
-    console.error(`Attestation ${attestation.id} failed:`, message);
-    return res.status(500).json(formatError("SUBMIT_FAILED", { message }));
-  }
+  return res.status(result.httpStatus).json(result.body);
 });
 
 router.get("/api/v1/status/:id", requireApiKey, async (req: Request, res: Response) => {
@@ -1734,49 +1675,5 @@ router.delete("/api/v1/admin/keys/:key", requireApiKey, async (req: Request, res
   }
   return res.json({ status: "deleted" });
 });
-
-// --- Background Polling ---
-
-async function pollForProof(id: string, roundId: number, abiEncoded: string, attempt = 1) {
-  await sleep(config.pollIntervalMs);
-
-  let proofData;
-  try {
-    proofData = await fdc.fetchProof(roundId, abiEncoded);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`Poll attempt ${attempt} for ${id}: ${message}`);
-    if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-    await store.updateAttestation(id, { status: "failed", error: `Polling exhausted: ${message}` });
-    return;
-  }
-
-  if (!proofData) {
-    console.log(`Poll attempt ${attempt} for ${id}: not ready yet`);
-    if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-    await store.updateAttestation(id, { status: "not_found", error: "Proof not found after max poll attempts" });
-    return;
-  }
-
-  await store.updateAttestation(id, { proof: proofData, status: "ready" });
-
-  if (config.paymentVerifierAddress) {
-    try {
-      const verifiedTxHash = await fdc.verifyProofOnChain(proofData, config.paymentVerifierAddress);
-      await store.updateAttestation(id, { verifiedTxHash, status: "verified" });
-      console.log(`Attestation ${id}: verified on-chain (${verifiedTxHash})`);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`Attestation ${id}: on-chain verification failed:`, message);
-      await store.updateAttestation(id, { error: message });
-    }
-  }
-
-  await deliverWebhooks(id);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export default router;
