@@ -145,6 +145,21 @@ export function validateEnv(): EnvValidationResult {
     );
   }
 
+  // x402 pay-per-use — receiving address only; never a secret/seed
+  if (process.env.X402_ENABLED !== "false") {
+    const payTo = (process.env.X402_PAY_TO_ADDRESS || "").trim();
+    if (!payTo) {
+      warnings.push(
+        "X402_PAY_TO_ADDRESS not set. Pay-per-attestation (x402) is disabled. " +
+          "Set your XRPL classic address to accept XRP/RLUSD from agents."
+      );
+    } else if (!/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(payTo)) {
+      errors.push(
+        "X402_PAY_TO_ADDRESS is not a valid XRPL classic address (must start with r)."
+      );
+    }
+  }
+
   return {
     valid: errors.length === 0,
     errors,
@@ -177,6 +192,7 @@ export function printValidationResult(result: EnvValidationResult): void {
     console.error("  RESEND_API_KEY         - Resend API key for emails");
     console.error("  WEBHOOK_SIGNING_SECRET - Secret for signing outbound webhooks");
     console.error("  DATABASE_URL           - Postgres connection string (Neon recommended)");
+    console.error("  X402_PAY_TO_ADDRESS    - XRPL address to receive pay-per-use payments");
     console.error("");
   }
 }
