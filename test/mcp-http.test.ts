@@ -3,62 +3,64 @@ import { describe, it, before, after } from "node:test";
 import http from "node:http";
 import express from "express";
 
-const PORT = 3456;
-let server: http.Server | null = null;
-
-async function startTestServer() {
-  if (server) return;
-  
-  process.env.PORT = String(PORT);
+/**
+ * Each suite owns its own server on an ephemeral port so Hardhat/node:test
+ * concurrency cannot close a sibling suite's listener. Clients disable
+ * keep-alive so sockets are never reused across listen/close.
+ */
+async function startTestServer(): Promise<{ server: http.Server; port: number }> {
   process.env.SESSION_SECRET = "test-secret-for-testing-1234567890";
-  
+
   const appModule = express.default ? express.default() : express();
   appModule.use(express.json());
-  
+
   const { default: routes } = await import("../src/routes.js");
   appModule.use(routes);
-  
-  return new Promise<void>((resolve, reject) => {
-    server = appModule.listen(PORT, "127.0.0.1", () => {
-      console.log(`Test server started on port ${PORT}`);
-      resolve();
-    });
-    server.on("error", reject);
+
+  const server = await new Promise<http.Server>((resolve, reject) => {
+    const s = appModule.listen(0, "127.0.0.1");
+    s.once("error", reject);
+    s.once("listening", () => resolve(s));
+  });
+  const addr = server.address();
+  if (!addr || typeof addr === "string") {
+    throw new Error("test server did not bind a TCP port");
+  }
+  console.log(`Test server started on port ${addr.port}`);
+  return { server, port: addr.port };
+}
+
+async function stopTestServer(server: http.Server | null): Promise<void> {
+  if (!server) return;
+  if (typeof server.closeAllConnections === "function") {
+    server.closeAllConnections();
+  }
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
   });
 }
 
-async function stopTestServer() {
-  return new Promise<void>((resolve) => {
-    if (server) {
-      server.close(() => {
-        server = null;
-        resolve();
-      });
-    } else {
-      resolve();
-    }
-  });
-}
-
-async function request(
+function request(
+  port: number,
   method: string,
   path: string,
   body?: any,
   headers?: Record<string, string>
 ): Promise<{ status: number; body: any; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
-    const url = new URL(path, `http://127.0.0.1:${PORT}`);
-    const finalHeaders: Record<string, string> = {
-      "Content-Type": "application/json",
-      ...headers,
-    };
+    const url = new URL(path, `http://127.0.0.1:${port}`);
     const req = http.request(
       {
         method,
         hostname: url.hostname,
         port: url.port,
         path: url.pathname + url.search,
-        headers: finalHeaders,
+        agent: new http.Agent({ keepAlive: false }),
+        headers: {
+          "Content-Type": "application/json",
+          Connection: "close",
+          ...headers,
+        },
       },
       (res) => {
         let data = "";
@@ -83,17 +85,21 @@ async function request(
 const MCP_ACCEPT = "application/json, text/event-stream";
 
 describe("MCP HTTP Server", () => {
+  let server: http.Server | null = null;
+  let port = 0;
+
   before(async () => {
-    await startTestServer();
+    ({ server, port } = await startTestServer());
   });
 
   after(async () => {
-    await stopTestServer();
+    await stopTestServer(server);
+    server = null;
   });
 
   describe("MCP Endpoint Availability", () => {
     it("should respond to POST /mcp with proper content type", async () => {
-      const res = await request("POST", "/mcp", {
+      const res = await request(port, "POST", "/mcp", {
         jsonrpc: "2.0",
         id: 1,
         method: "initialize",
@@ -112,7 +118,7 @@ describe("MCP HTTP Server", () => {
     });
 
     it("should return session header for initialize", async () => {
-      const res = await request("POST", "/mcp", {
+      const res = await request(port, "POST", "/mcp", {
         jsonrpc: "2.0",
         id: 1,
         method: "initialize",
@@ -131,22 +137,26 @@ describe("MCP HTTP Server", () => {
 });
 
 describe("JSON Receipt Content Negotiation", () => {
+  let server: http.Server | null = null;
+  let port = 0;
+
   before(async () => {
-    if (!server) await startTestServer();
+    ({ server, port } = await startTestServer());
   });
 
   after(async () => {
-    if (server) await stopTestServer();
+    await stopTestServer(server);
+    server = null;
   });
 
   it("should return HTML by default", async () => {
-    const res = await request("GET", "/receipt/87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F");
+    const res = await request(port, "GET", "/receipt/87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F");
     assert.equal(res.status, 200);
     assert.ok(typeof res.body === "string" && res.body.includes("<!DOCTYPE html"), "Should return HTML");
   });
 
   it("should return JSON with format=json query param", async () => {
-    const res = await request("GET", "/receipt/87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F?format=json");
+    const res = await request(port, "GET", "/receipt/87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F?format=json");
     assert.equal(res.status, 200);
     assert.ok(typeof res.body === "object", "Should return JSON object");
     assert.ok("txHash" in res.body, "JSON should have txHash field");
@@ -154,6 +164,7 @@ describe("JSON Receipt Content Negotiation", () => {
 
   it("should return JSON with Accept: application/json header", async () => {
     const res = await request(
+      port,
       "GET",
       "/receipt/87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F",
       undefined,
@@ -167,6 +178,7 @@ describe("JSON Receipt Content Negotiation", () => {
 
   it("should return 404 JSON for non-existent transaction", async () => {
     const res = await request(
+      port,
       "GET",
       "/receipt/0000000000000000000000000000000000000000000000000000000000000000?format=json",
       undefined
@@ -177,16 +189,20 @@ describe("JSON Receipt Content Negotiation", () => {
 });
 
 describe("Agent Discovery Files", () => {
+  let server: http.Server | null = null;
+  let port = 0;
+
   before(async () => {
-    if (!server) await startTestServer();
+    ({ server, port } = await startTestServer());
   });
 
   after(async () => {
-    if (server) await stopTestServer();
+    await stopTestServer(server);
+    server = null;
   });
 
   it("should serve /llms.txt", async () => {
-    const res = await request("GET", "/llms.txt");
+    const res = await request(port, "GET", "/llms.txt");
     assert.equal(res.status, 200);
     assert.ok(typeof res.body === "string", "Should return text");
     assert.ok(res.body.includes("XRPLink"), "Should mention XRPLink");
@@ -196,7 +212,7 @@ describe("Agent Discovery Files", () => {
   });
 
   it("should serve /openapi.json", async () => {
-    const res = await request("GET", "/openapi.json");
+    const res = await request(port, "GET", "/openapi.json");
     assert.equal(res.status, 200);
     assert.ok(typeof res.body === "object", "Should return JSON");
     assert.equal(res.body.openapi, "3.0.3", "Should be OpenAPI 3.0.3");
@@ -206,7 +222,7 @@ describe("Agent Discovery Files", () => {
   });
 
   it("should serve /.well-known/mcp.json", async () => {
-    const res = await request("GET", "/.well-known/mcp.json");
+    const res = await request(port, "GET", "/.well-known/mcp.json");
     assert.equal(res.status, 200);
     assert.ok(typeof res.body === "object", "Should return JSON");
     assert.equal(res.body.name, "XRPLink", "Should have correct name");
@@ -217,7 +233,7 @@ describe("Agent Discovery Files", () => {
   });
 
   it("should serve /.well-known/ai-plugin.json", async () => {
-    const res = await request("GET", "/.well-known/ai-plugin.json");
+    const res = await request(port, "GET", "/.well-known/ai-plugin.json");
     assert.equal(res.status, 200);
     assert.ok(typeof res.body === "object", "Should return JSON");
     assert.equal(res.body.name_for_model, "xrplink", "Should have model name");
