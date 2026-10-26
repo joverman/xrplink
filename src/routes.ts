@@ -264,6 +264,7 @@ router.get("/docs", (_req: Request, res: Response) => {
   <a href="#auth">Authentication</a>
   <a href="#receipts">Receipts</a>
   <a href="#attestation">Attestation</a>
+  <a href="#x402">Pay as you go (x402)</a>
   <a href="#billing">Billing</a>
   <a href="#mcp">MCP Server</a>
   <a href="#errors">Errors</a>
@@ -303,6 +304,9 @@ router.get("/docs", (_req: Request, res: Response) => {
 
 <h2 id="attestation">Attestation</h2>
 <p>Attesting a payment generates the on-chain cryptographic proof. Use a subscription API key (inside monthly quota) or pay per attestation with <strong>x402</strong> on the XRP Ledger (XRP or RLUSD). Proofs are ready in ~90-180 seconds (FDC voting round). Status lookups stay free.</p>
+
+<h3 id="x402">Pay as you go (x402)</h3>
+<p>No account or subscription required. POST without an API key (or over quota) returns HTTP 402 with payment requirements. Pay in RLUSD or XRP on the XRP Ledger, then retry with PAYMENT-SIGNATURE. Price tracks the Flare (FLR) attestation fee from the configured floor up to the cap. One payment = one attestation.</p>
 
 <h3>Verify an XRP payment</h3>
 <div class="endpoint"><span class="method post">POST</span><span class="path">/api/v1/verify/xrp-payment</span><span class="badge api-key" style="margin-left:0.5rem">API key or x402</span><div class="desc">Submits a transaction hash for attestation. Subscribers inside quota skip payment. Otherwise the server returns HTTP 402 with x402 requirements; retry with PAYMENT-SIGNATURE after paying. One payment = one attestation.</div></div>
