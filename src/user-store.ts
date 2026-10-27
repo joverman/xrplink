@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkS
 import { dirname, join } from "path";
 import { v4 as uuid } from "uuid";
 import { Tier } from "./types.js";
-import { apiKeyLookupId, hashApiKey, isPlaintextApiKey } from "./api-keys.js";
+import { apiKeyLookupId, hashApiKey, isPlaintextApiKey, timingSafeEqualString } from "./api-keys.js";
 
 const DATA_DIR = process.env.DATA_DIR || "data";
 const USERS_PATH = join(DATA_DIR, "users.json");
@@ -25,6 +25,15 @@ export interface StoredUser {
   billingPeriodEnd?: number;
   /** txHashes this user attested or verified from the dashboard (newest last). */
   receiptTxHashes?: string[];
+  /**
+   * Incremented to revoke every outstanding session JWT for this user.
+   * Missing on pre-migration records; treated as 1.
+   */
+  sessionVersion?: number;
+  /** SHA-256 hex of the current password-reset secret. Never store the plaintext. */
+  resetTokenHash?: string;
+  /** Unix epoch ms when resetTokenHash expires. */
+  resetTokenExpiresAt?: number;
 }
 
 interface PersistedData {
@@ -48,7 +57,7 @@ class UserStore {
         : {};
       const users = raw.users || raw;
       const emailIndex: Record<string, string> = {};
-      let hashedIds = false;
+      let needsPersist = false;
       for (const [id, u] of Object.entries(users)) {
         const user = u as StoredUser;
         emailIndex[user.email.toLowerCase()] = id;
@@ -56,12 +65,16 @@ class UserStore {
           const nextIds = user.apiKeyIds.map((k) => (isPlaintextApiKey(k) ? hashApiKey(k) : k));
           if (nextIds.some((k, i) => k !== user.apiKeyIds[i])) {
             user.apiKeyIds = nextIds;
-            hashedIds = true;
+            needsPersist = true;
           }
+        }
+        if (typeof user.sessionVersion !== "number" || !Number.isFinite(user.sessionVersion) || user.sessionVersion < 1) {
+          user.sessionVersion = 1;
+          needsPersist = true;
         }
       }
       const loaded = { users, emailIndex };
-      if (hashedIds) {
+      if (needsPersist) {
         this.data = loaded;
         this.persist();
       }
@@ -108,6 +121,7 @@ class UserStore {
       subscriptionStatus: "none",
       createdAt: new Date().toISOString(),
       receiptTxHashes: [],
+      sessionVersion: 1,
     };
     this.data.users[id] = user;
     this.data.emailIndex[email.toLowerCase()] = id;
@@ -125,8 +139,36 @@ class UserStore {
   update(id: string, updates: Partial<StoredUser>) {
     const user = this.data.users[id];
     if (!user) return;
-    this.data.users[id] = { ...user, ...updates };
+    const next = { ...user, ...updates };
+    if (updates.resetTokenHash === undefined && "resetTokenHash" in updates) {
+      delete next.resetTokenHash;
+    }
+    if (updates.resetTokenExpiresAt === undefined && "resetTokenExpiresAt" in updates) {
+      delete next.resetTokenExpiresAt;
+    }
+    this.data.users[id] = next;
     this.persist();
+  }
+
+  currentSessionVersion(user: StoredUser): number {
+    return typeof user.sessionVersion === "number" && user.sessionVersion >= 1 ? user.sessionVersion : 1;
+  }
+
+  bumpSessionVersion(id: string): StoredUser | undefined {
+    const user = this.data.users[id];
+    if (!user) return undefined;
+    this.update(id, { sessionVersion: this.currentSessionVersion(user) + 1 });
+    return this.data.users[id];
+  }
+
+  findByResetTokenHash(hash: string): StoredUser | undefined {
+    if (!hash) return undefined;
+    for (const user of Object.values(this.data.users)) {
+      if (user.resetTokenHash && timingSafeEqualString(user.resetTokenHash, hash)) {
+        return user;
+      }
+    }
+    return undefined;
   }
 
   delete(id: string) {

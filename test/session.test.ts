@@ -172,6 +172,8 @@ describe("Session cookies and nav", () => {
     assert.match(cleared!, /Max-Age=0|Max-Age=-|Expires=Thu, 01 Jan 1970/i);
     const me = await request(port, "GET", "/me");
     assert.equal(me.status, 401);
+    const stillPresented = await request(port, "GET", "/me", { cookie });
+    assert.equal(stillPresented.status, 401);
   });
 
   it("includes shared nav hooks on public pages", async () => {

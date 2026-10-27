@@ -24,7 +24,10 @@ export async function rotateUserApiKey(user: StoredUser): Promise<{
   }
 
   const remaining = current.apiKeyIds.filter((id) => id !== oldId);
-  userStore.update(current.id, { apiKeyIds: [newId, ...remaining] });
+  userStore.update(current.id, {
+    apiKeyIds: [newId, ...remaining],
+    sessionVersion: userStore.currentSessionVersion(current) + 1,
+  });
 
   const fresh = await store.getApiKey(newId);
   return {

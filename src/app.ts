@@ -2,9 +2,11 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { loadLandingHtml, loadPricingHtml } from "./landing.js";
+import { securityHeaders } from "./security-headers.js";
 import routes from "./routes.js";
 
 const app = express();
+app.disable("x-powered-by");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Trust proxy headers (Cloudflare Tunnel, Fly.io, nginx, etc.)
@@ -18,6 +20,8 @@ if (trustProxy === "true" || trustProxy === "1") {
 } else {
   app.set("trust proxy", trustProxy);
 }
+
+app.use(securityHeaders);
 
 // Get real client IP, preferring Cloudflare's CF-Connecting-IP header
 function getClientIp(req: express.Request): string {

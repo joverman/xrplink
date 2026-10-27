@@ -67,21 +67,41 @@ export async function initProducts() {
   }
 }
 
-function lookupKeyToTier(lookupKey: string): Tier | null {
+export function lookupKeyToTier(lookupKey: string | null | undefined): Tier | null {
+  if (!lookupKey) return null;
   for (const [tier, info] of Object.entries(TIER_PRODUCTS)) {
     if (info.lookupKey === lookupKey) return tier as Tier;
   }
   return null;
 }
 
-async function getPriceInfo(priceId: string): Promise<{ tier: Tier; lookupKey: string } | null> {
-  if (!stripe) return null;
+export function priceIdFromCheckoutSession(
+  session: {
+    line_items?: {
+      data?: Array<{ price?: string | { id?: string; lookup_key?: string | null } | null }>;
+    };
+  },
+  subscription?: {
+    items?: { data?: Array<{ price?: { id?: string; lookup_key?: string | null } | null }> };
+  } | null
+): { priceId: string; lookupKey?: string | null } | null {
+  const subPrice = subscription?.items?.data?.[0]?.price;
+  if (subPrice?.id) return { priceId: subPrice.id, lookupKey: subPrice.lookup_key };
+  const line = session.line_items?.data?.[0]?.price;
+  if (!line) return null;
+  if (typeof line === "string") return { priceId: line };
+  if (line.id) return { priceId: line.id, lookupKey: line.lookup_key };
+  return null;
+}
 
+export async function getPriceInfo(priceId: string): Promise<{ tier: Tier; lookupKey: string } | null> {
   for (const [tier, info] of Object.entries(TIER_PRODUCTS)) {
-    if (info.priceId === priceId) {
+    if (info.priceId && info.priceId === priceId) {
       return { tier: tier as Tier, lookupKey: info.lookupKey };
     }
   }
+
+  if (!stripe) return null;
 
   try {
     const price = await stripe.prices.retrieve(priceId);
@@ -93,6 +113,26 @@ async function getPriceInfo(priceId: string): Promise<{ tier: Tier; lookupKey: s
   }
 
   return null;
+}
+
+export async function resolveCheckoutTier(
+  session: {
+    line_items?: {
+      data?: Array<{ price?: string | { id?: string; lookup_key?: string | null } | null }>;
+    };
+    metadata?: Record<string, string> | null;
+  },
+  subscription?: {
+    items?: { data?: Array<{ price?: { id?: string; lookup_key?: string | null } | null }> };
+  } | null
+): Promise<Tier | null> {
+  // Entitlement comes from the Stripe price, never from client metadata or query params.
+  const priced = priceIdFromCheckoutSession(session, subscription);
+  if (!priced) return null;
+  const fromLookup = lookupKeyToTier(priced.lookupKey);
+  if (fromLookup) return fromLookup;
+  const info = await getPriceInfo(priced.priceId);
+  return info?.tier ?? null;
 }
 
 async function ensurePortalConfiguration(): Promise<string | null> {
@@ -186,7 +226,7 @@ export async function createCheckoutSession(
       customer_email: user.stripeCustomerId ? undefined : user.email,
       customer: user.stripeCustomerId || undefined,
       line_items: [{ price: product.priceId, quantity: 1 }],
-      metadata: { userId: user.id, tier },
+      metadata: { userId: user.id },
       success_url: `${DOMAIN}/dashboard?upgraded=${tier}`,
       cancel_url: `${DOMAIN}/pricing`,
     };
@@ -252,12 +292,10 @@ async function updateUserSubscription(
   }
 }
 
-async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promise<void> {
+export async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promise<void> {
   const userId = session.metadata?.userId;
-  const tier = session.metadata?.tier as Tier | undefined;
-
-  if (!userId || !tier) {
-    console.log("Checkout completed but missing userId or tier in metadata");
+  if (!userId) {
+    console.log("Checkout completed but missing userId in metadata");
     return;
   }
 
@@ -272,18 +310,30 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promis
       ? session.subscription
       : session.subscription?.id;
 
-  // Fetch subscription to get billing period
+  let retrievedSubscription: Stripe.Subscription | null = null;
   let billingPeriodStart: number | undefined;
   let billingPeriodEnd: number | undefined;
-  
+
   if (stripe && subscriptionId) {
     try {
-      const subscription = await stripe.subscriptions.retrieve(subscriptionId) as any;
-      billingPeriodStart = subscription.current_period_start;
-      billingPeriodEnd = subscription.current_period_end;
+      retrievedSubscription = await stripe.subscriptions.retrieve(subscriptionId);
+      const sub = retrievedSubscription as Stripe.Subscription & {
+        current_period_start?: number;
+        current_period_end?: number;
+      };
+      billingPeriodStart = sub.current_period_start;
+      billingPeriodEnd = sub.current_period_end;
     } catch (err) {
       console.error("Failed to fetch subscription for billing period:", err);
     }
+  }
+
+  const tier = await resolveCheckoutTier(session, retrievedSubscription);
+  if (!tier) {
+    console.log(
+      `Checkout completed for user ${userId} but price is missing or unknown; ignoring metadata.tier=${session.metadata?.tier || ""}`
+    );
+    return;
   }
 
   await updateUserSubscription(user, {
