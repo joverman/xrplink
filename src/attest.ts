@@ -14,9 +14,11 @@
 import { store } from "./store.js";
 import { config } from "./config.js";
 import * as fdc from "./fdc-service.js";
+import { FdcVerifierError } from "./fdc-service.js";
 import { deliverWebhooks } from "./webhook-service.js";
 import { userStore } from "./user-store.js";
 import { formatError } from "./mcp/errors.js";
+import { preflightXrplPayment, XrplPreflightFail } from "./xrpl-tx.js";
 import {
   checkQuota,
   buildQuotaExceededError,
@@ -187,19 +189,70 @@ async function submitToFdc(
     await store.updateAttestation(attestation.id, { status: "failed", error: message });
     if (x402InvoiceId) markPaymentFdcFailed(x402InvoiceId);
     console.error(`Attestation ${attestation.id} failed:`, message);
-    return {
-      kind: "error",
-      httpStatus: 500,
-      body: {
-        ...formatError("SUBMIT_FAILED", { message }),
-        x402InvoiceId,
-        retryWithoutRepayment: Boolean(x402InvoiceId),
-        suggestedAction: x402InvoiceId
-          ? "Payment settled but FDC submit failed. Retry the same request with the same PAYMENT-SIGNATURE to resubmit to FDC without paying again."
-          : undefined,
-      },
-    };
+    return mapSubmitError(err, message, x402InvoiceId);
   }
+}
+
+function preflightToAttestError(fail: XrplPreflightFail): AttestError {
+  const ctx: Record<string, string> = {};
+  if (fail.ageDays != null) ctx.ageDays = String(fail.ageDays);
+  if (fail.windowDays != null) ctx.windowDays = String(fail.windowDays);
+  if (fail.closedAt) ctx.closedAt = fail.closedAt;
+  if (fail.transactionType) ctx.transactionType = fail.transactionType;
+
+  const body: Record<string, any> = {
+    ...formatError(fail.code, Object.keys(ctx).length ? ctx : undefined),
+  };
+  if (fail.ageDays != null) body.ageDays = fail.ageDays;
+  if (fail.windowDays != null) body.windowDays = fail.windowDays;
+  if (fail.closedAt) body.closedAt = fail.closedAt;
+  if (fail.transactionType) body.transactionType = fail.transactionType;
+  return { kind: "error", httpStatus: fail.httpStatus, body };
+}
+
+function mapSubmitError(err: unknown, message: string, x402InvoiceId?: string): AttestError {
+  const isVerifier =
+    err instanceof FdcVerifierError ||
+    message.startsWith("Verifier ") ||
+    message.includes("Verifier returned non-VALID");
+
+  const retry = {
+    x402InvoiceId,
+    retryWithoutRepayment: Boolean(x402InvoiceId),
+  };
+
+  if (isVerifier) {
+    const verifierStatus = err instanceof FdcVerifierError ? err.verifierStatus : undefined;
+    const httpStatus =
+      err instanceof FdcVerifierError && err.httpStatus && err.httpStatus >= 500 ? 502 : 400;
+    const body = {
+      ...formatError("VERIFIER_ERROR", {
+        message,
+        ...(verifierStatus ? { status: verifierStatus } : {}),
+      }),
+      ...retry,
+    };
+    if (x402InvoiceId) {
+      body.suggestedAction =
+        "Payment settled but the Flare verifier rejected this hash. Retry the same request with the same PAYMENT-SIGNATURE after using a native XRP Payment from the last 14 days — you will not be charged again.";
+    }
+    return { kind: "error", httpStatus, body };
+  }
+
+  return {
+    kind: "error",
+    httpStatus: 500,
+    body: {
+      ...formatError("SUBMIT_FAILED", { message }),
+      ...retry,
+      ...(x402InvoiceId
+        ? {
+            suggestedAction:
+              "Payment settled but FDC submit failed. Retry the same request with the same PAYMENT-SIGNATURE to resubmit to FDC without paying again.",
+          }
+        : {}),
+    },
+  };
 }
 
 export async function attestXrpPayment(opts: {
@@ -262,24 +315,6 @@ export async function attestXrpPayment(opts: {
         body: { code: "X402_UNAVAILABLE", error: "X402_UNAVAILABLE", message: "x402 is not configured" },
       };
     }
-
-    const paid = await processX402Payment(paymentSignature, cleanHash);
-    if (paid.outcome === "replay") {
-      return {
-        kind: "error",
-        httpStatus: 409,
-        body: { code: "PAYMENT_REPLAY", error: "PAYMENT_REPLAY", message: paid.error },
-      };
-    }
-    if (paid.outcome === "failed") {
-      return {
-        kind: "error",
-        httpStatus: 402,
-        body: { code: "PAYMENT_FAILED", error: "PAYMENT_FAILED", message: paid.error },
-      };
-    }
-    x402InvoiceId = paid.invoiceId;
-    settlement = paid.settlement;
   } else if (apiKeyHeader) {
     const found = opts.apiKeyRecord || (await store.getApiKey(apiKeyHeader));
     if (!found || !found.active) {
@@ -315,6 +350,32 @@ export async function attestXrpPayment(opts: {
       return paymentRequiredResult(cleanHash, "API key required, or pay per attestation with x402.");
     }
     return { kind: "error", httpStatus: 401, body: formatError("MISSING_API_KEY") };
+  }
+
+  // Skip XRPL preflight when FDC is mocked (unit/integration tests).
+  if (!fdcPrepareOverride) {
+    const preflight = await preflightXrplPayment(cleanHash);
+    if (!preflight.ok) return preflightToAttestError(preflight);
+  }
+
+  if (paymentSignature) {
+    const paid = await processX402Payment(paymentSignature, cleanHash);
+    if (paid.outcome === "replay") {
+      return {
+        kind: "error",
+        httpStatus: 409,
+        body: { code: "PAYMENT_REPLAY", error: "PAYMENT_REPLAY", message: paid.error },
+      };
+    }
+    if (paid.outcome === "failed") {
+      return {
+        kind: "error",
+        httpStatus: 402,
+        body: { code: "PAYMENT_FAILED", error: "PAYMENT_FAILED", message: paid.error },
+      };
+    }
+    x402InvoiceId = paid.invoiceId;
+    settlement = paid.settlement;
   }
 
   const result = await submitToFdc(cleanHash, x402InvoiceId);

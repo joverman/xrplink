@@ -14,6 +14,18 @@ function encodeAttestationType(type: string): string {
   return "0x" + Buffer.from(type).toString("hex").padEnd(64, "0");
 }
 
+export class FdcVerifierError extends Error {
+  readonly httpStatus?: number;
+  readonly verifierStatus?: string;
+
+  constructor(message: string, opts?: { httpStatus?: number; verifierStatus?: string }) {
+    super(message);
+    this.name = "FdcVerifierError";
+    this.httpStatus = opts?.httpStatus;
+    this.verifierStatus = opts?.verifierStatus;
+  }
+}
+
 /**
  * Prepare an attestation request via the verifier API.
  */
@@ -36,12 +48,16 @@ export async function prepareRequest(txHash: string, proofOwner: string): Promis
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Verifier error (${response.status}): ${text}`);
+    throw new FdcVerifierError(`Verifier error (${response.status}): ${text}`, {
+      httpStatus: response.status,
+    });
   }
 
   const data = await response.json();
   if (data.status !== "VALID") {
-    throw new Error(`Verifier returned non-VALID status: ${data.status}`);
+    throw new FdcVerifierError(`Verifier returned non-VALID status: ${data.status}`, {
+      verifierStatus: String(data.status ?? ""),
+    });
   }
 
   return data.abiEncodedRequest;

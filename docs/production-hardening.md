@@ -11,8 +11,31 @@ These must be set before deploying to production. The app will refuse to start i
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `SESSION_SECRET` | Secret for JWT signing (min 32 chars) | `openssl rand -base64 32` |
-| `VERIFIER_API_KEY` | Flare Data Connector API key | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
-| `PRIVATE_KEY_FLARE` | Wallet private key for Flare mainnet | `0x...` (64 hex chars) |
+
+The app starts without a funded Flare wallet or a dedicated verifier key (receipt lookup still works). New attestations need the Flare mainnet vars below.
+
+### Flare mainnet attestation (`FLARE_NETWORK=flare`)
+
+XRPLink does not take a verifier URL from env. With `FLARE_NETWORK=flare` it always calls:
+
+- Verifier: `https://fdc-verifiers-mainnet.flare.network/verifier/xrp/XRPPayment/prepareRequest`
+- Source ID: `XRP` (not `testXRP`)
+- FdcHub: `0xc25c749DC27Efb1864Cb3DADa8845B7687eB2d44` (Flare mainnet)
+- XRPL: mainnet (`s1.ripple.com` / `xrplcluster.com`)
+
+Flare's `XRPPayment` type can only prove **native XRP Payments from the last 14 days** (`IXRPPayment` lutlimit `0x127500` = 1,209,600 seconds). Older hashes are still on XRPL; the hosted indexer returns `INVALID: TRANSACTION DOES NOT EXIST`. The API preflights XRPL and returns `TX_TOO_OLD` without calling FdcHub and without consuming monthly attestation quota.
+
+| Variable | Required to attest? | Where to get it |
+|----------|---------------------|-----------------|
+| `FLARE_NETWORK` | Yes (`flare`) | Set to `flare`. Default in code is `coston2` (testnet verifier + `testXRP`). |
+| `VERIFIER_API_KEY` | Recommended | Flare's public key `00000000-0000-0000-0000-000000000000` is documented on the [Network Overview](https://dev.flare.network/network/overview) and [FAQs](https://dev.flare.network/support/faqs). It is accepted on the hosted mainnet verifier. For higher DA Layer rate limits, open an API Key Request issue as linked from the FAQ. |
+| `PRIVATE_KEY_FLARE` | Yes, for new attestations | Hex private key of a **Flare mainnet** (chain ID 14) wallet. Generate with `npm run wallet`. Fund it with enough FLR to pay FdcHub `requestAttestation` — default `SUBMIT_FEE_FLR` is `20` on flare. Without this, prepare may succeed and FdcHub submit will fail (`SUBMIT_FAILED`). Do not use a Coston2 faucet key here. |
+| `SUBMIT_FEE_FLR` | No | Optional override of the FdcHub fee in FLR. Default `20` when `FLARE_NETWORK=flare`. |
+| `PAYMENT_VERIFIER_ADDRESS_FLARE` | No | After you deploy `PaymentVerifierMainnet`, set the contract address (`0x` + 40 hex). Unset means proofs are fetched but not verified on-chain. Invalid format refuses boot. |
+| `DATABASE_URL` | No | Postgres URL if you want durable storage. Unset uses JSON files under `DATA_DIR`. |
+| `SESSION_SECRET` | Yes (boot) | `openssl rand -base64 32`. Unrelated to FDC; required for login cookies. |
+
+Do **not** invent verifier URLs or API keys. `PAYMENT_VERIFIER_ADDRESS_FLARE` is not the FDC verifier — it is this app's optional on-chain contract.
 
 ### Optional (On-Chain Verification)
 
