@@ -9,7 +9,7 @@ This document describes the production hardening measures implemented and the re
 These must be set before deploying to production. The app will refuse to start if they're missing or set to development defaults.
 
 | Variable | Description | Example |
-|----------|-------------|---------| 
+|----------|-------------|---------|
 | `SESSION_SECRET` | Secret for JWT signing (min 32 chars) | `openssl rand -base64 32` |
 | `VERIFIER_API_KEY` | Flare Data Connector API key | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 | `PRIVATE_KEY_FLARE` | Wallet private key for Flare mainnet | `0x...` (64 hex chars) |
@@ -19,7 +19,7 @@ These must be set before deploying to production. The app will refuse to start i
 On-chain proof verification is disabled when this is not set. The app works without it (attestations are fetched and returned, but not verified on-chain). Deploy the PaymentVerifier contract and set this address to enable on-chain verification.
 
 | Variable | Description | Example |
-|----------|-------------|---------| 
+|----------|-------------|---------|
 | `PAYMENT_VERIFIER_ADDRESS_FLARE` | Deployed PaymentVerifier contract | `0x...` (40 hex chars) |
 
 **Note**: If set, the address must be a valid Ethereum address format (0x + 40 hex characters). An invalid format will cause a startup error.
@@ -119,7 +119,7 @@ Users in `past_due` status retain their tier during Stripe's automatic retry per
 ### Recommended for Production
 
 | Variable | Description | Default |
-|----------|-------------|---------| 
+|----------|-------------|---------|
 | `DATABASE_URL` | Postgres connection string (Neon) | JSON file storage |
 | `WEBHOOK_SIGNING_SECRET` | Secret for signing outbound webhooks | (none - webhooks unsigned) |
 | `RESEND_API_KEY` | Resend API key for emails | (emails disabled) |
@@ -127,7 +127,7 @@ Users in `past_due` status retain their tier during Stripe's automatic retry per
 ### Application Configuration
 
 | Variable | Description | Default |
-|----------|-------------|---------| 
+|----------|-------------|---------|
 | `FLARE_NETWORK` | Network: `coston2` or `flare` | `coston2` |
 | `PORT` | HTTP port | `3000` |
 | `HOST` | Bind address | `0.0.0.0` |
