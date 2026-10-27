@@ -179,7 +179,7 @@ describe("Session cookies and nav", () => {
       const page = await request(port, "GET", path);
       assert.equal(page.status, 200, path);
       assert.match(page.raw, /id="authNav"/, path);
-      assert.match(page.raw, /session-nav\\.js/, path);
+      assert.match(page.raw, /session-nav\.js/, path);
     }
   });
 
