@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { loadLandingHtml } from "./landing.js";
+import { loadLandingHtml, loadPricingHtml } from "./landing.js";
 import routes from "./routes.js";
 
 const app = express();
@@ -32,9 +32,13 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Public landing page interpolates X402_FLOOR_USD / X402_CAP_USD into the Pay as you go card.
+// Public landing and pricing pages interpolate X402_FLOOR_USD / X402_CAP_USD into the Pay as you go card.
 app.get(["/", "/index.html"], (_req, res) => {
   res.type("html").send(loadLandingHtml());
+});
+
+app.get(["/pricing", "/pricing.html"], (_req, res) => {
+  res.type("html").send(loadPricingHtml());
 });
 
 // Serve static files (landing page, assets)

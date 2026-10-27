@@ -175,7 +175,7 @@ describe("Session cookies and nav", () => {
   });
 
   it("includes shared nav hooks on public pages", async () => {
-    for (const path of ["/", "/docs", "/contact", "/dashboard"]) {
+    for (const path of ["/", "/docs", "/contact", "/dashboard", "/pricing"]) {
       const page = await request(port, "GET", path);
       assert.equal(page.status, 200, path);
       assert.match(page.raw, /id="authNav"/, path);
@@ -188,6 +188,22 @@ describe("Session cookies and nav", () => {
     assert.match(page.raw, /data-pricing-cta="free"/);
     assert.match(page.raw, /data-pricing-cta="paid"/);
     assert.match(page.raw, /data-pricing-cta="pro"/);
+  });
+
+  it("serves /pricing as a real page with the same plan cards", async () => {
+    const page = await request(port, "GET", "/pricing");
+    assert.equal(page.status, 200);
+    assert.match(page.raw, /<h1>Pricing<\/h1>/);
+    assert.match(page.raw, /<h3>Free<\/h3>/);
+    assert.match(page.raw, /<h3>Paid<\/h3>/);
+    assert.match(page.raw, /<h3>Pro<\/h3>/);
+    assert.match(page.raw, /<h3>Pay as you go<\/h3>/);
+    assert.match(page.raw, /data-pricing-cta="free"/);
+    assert.match(page.raw, /data-pricing-cta="paid"/);
+    assert.match(page.raw, /data-pricing-cta="pro"/);
+    assert.match(page.raw, /href="\/docs#x402"/);
+    assert.doesNotMatch(page.raw, /\{\{PRICING_CARDS\}\}/);
+    assert.doesNotMatch(page.raw, /\{\{X402_FLOOR_USD\}\}/);
   });
 });
 

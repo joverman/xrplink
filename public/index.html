@@ -116,7 +116,7 @@ footer a:hover{text-decoration:underline}
   <div class="nav-links">
     <a href="#how">How it works</a>
     <a href="#use-cases">Use cases</a>
-    <a href="#pricing">Pricing</a>
+    <a href="/pricing">Pricing</a>
     <a href="#api">API</a>
     <a href="https://github.com/joverman/xrplink">GitHub</a>
   </div>
@@ -207,59 +207,7 @@ footer a:hover{text-decoration:underline}
 <section class="section" id="pricing">
   <h2>Pricing</h2>
   <p class="subtitle">Start with a free account, upgrade when you need verified receipts</p>
-  <div class="pricing-grid">
-    <div class="price-card">
-      <h3>Free</h3>
-      <div class="price">$0<span>/mo</span></div>
-      <p class="desc">Explore and test</p>
-      <ul>
-        <li>Receipt lookup (any XRP tx)</li>
-        <li>REST API access (10 req/min)</li>
-        <li>Free API key</li>
-      </ul>
-      <a href="/signup" class="btn btn-outline" style="width:100%" data-pricing-cta="free">Sign Up Free</a>
-    </div>
-    <div class="price-card featured popular">
-      <h3>Paid</h3>
-      <div class="price">$29<span>/mo</span></div>
-      <p class="desc">For growing businesses</p>
-      <ul>
-        <li>20 verified receipts per month</li>
-        <li>100 requests per minute</li>
-        <li>Webhook callbacks</li>
-        <li>Email support</li>
-      </ul>
-      <a href="/signup?plan=paid" class="btn btn-primary" style="width:100%" data-pricing-cta="paid">Subscribe</a>
-    </div>
-    <div class="price-card">
-      <h3>Pro</h3>
-      <div class="price">$99<span>/mo</span></div>
-      <p class="desc">For high-volume compliance</p>
-      <ul>
-        <li>100 verified receipts per month</li>
-        <li>Unlimited rate limit</li>
-        <li>White-label branding</li>
-        <li>Admin API key management</li>
-        <li>Priority support</li>
-      </ul>
-      <a href="/signup?plan=pro" class="btn btn-primary" style="width:100%" data-pricing-cta="pro">Subscribe</a>
-    </div>
-    <div class="price-card">
-      <h3>Pay as you go</h3>
-      <div class="price"><span>from</span> ${{X402_FLOOR_USD}}<span> per attestation</span></div>
-      <p class="desc">For AI agents and one-off checks</p>
-      <ul>
-        <li>No account or subscription</li>
-        <li>Pay in RLUSD or XRP on the XRP Ledger (x402)</li>
-        <li>Price tracks the Flare (FLR) fee, capped at ${{X402_CAP_USD}}</li>
-        <li>Built for agents: MCP at xrp-link.com/mcp</li>
-      </ul>
-      <a href="/docs#x402" class="btn btn-outline" style="width:100%">Pay per attestation</a>
-    </div>
-  </div>
-  <p style="text-align:center;margin-top:2rem;color:#64748b;font-size:0.85rem">
-    Need more receipts? <a href="/contact" style="color:#818cf8">Contact us</a> for enterprise pricing.
-  </p>
+  {{PRICING_CARDS}}
 </section>
 
 <section class="section" id="api">

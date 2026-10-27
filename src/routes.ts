@@ -28,7 +28,7 @@ function publicNavHtml(): string {
   <div class="nav-links">
     <a href="/">Home</a>
     <a href="/docs">API Docs</a>
-    <a href="/#pricing">Pricing</a>
+    <a href="/pricing">Pricing</a>
     <a href="/contact">Contact</a>
   </div>
   <span id="authNav"></span>
@@ -1013,7 +1013,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
   <div class="nav">
     <a href="/">Home</a>
     <a href="/docs">API Docs</a>
-    <a href="/#pricing">Pricing</a>
+    <a href="/pricing">Pricing</a>
     <a href="/contact">Contact</a>
     <span id="authNav"></span>
   </div>

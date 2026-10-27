@@ -56,4 +56,31 @@ describe("Landing page pricing helpers", () => {
     assert.match(routesSrc, /Pay as you go \(x402\)/);
     assert.match(routesSrc, /id="attestation"/);
   });
+
+  it("renders a dedicated /pricing page from the same plan cards", async () => {
+    const { loadPricingHtml, renderLandingPage } = await import("../src/landing.js");
+    const html = loadPricingHtml();
+    assert.match(html, /<h1>Pricing<\/h1>/);
+    assert.match(html, /<h3>Free<\/h3>/);
+    assert.match(html, /<h3>Paid<\/h3>/);
+    assert.match(html, /<h3>Pro<\/h3>/);
+    assert.match(html, /<h3>Pay as you go<\/h3>/);
+    assert.match(html, /data-pricing-cta="paid"/);
+    assert.match(html, /session-nav\.js/);
+    assert.doesNotMatch(html, /\{\{PRICING_CARDS\}\}/);
+    assert.doesNotMatch(html, /\{\{X402_FLOOR_USD\}\}/);
+    const withCustom = renderLandingPage(
+      readFileSync(join(ROOT, "public", "pricing.html"), "utf8"),
+      4.25,
+      12
+    );
+    assert.match(withCustom, /from<\/span> \$4\.25<span> per attestation<\/span>/);
+    assert.match(withCustom, /capped at \$12/);
+  });
+
+  it("registers GET /pricing on the app", () => {
+    const appSrc = readFileSync(APP_PATH, "utf8");
+    assert.match(appSrc, /loadPricingHtml/);
+    assert.match(appSrc, /app\.get\(\["\/pricing", "\/pricing\.html"\]/);
+  });
 });
