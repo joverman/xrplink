@@ -64,6 +64,17 @@ interface Store {
   getAttestationUsage(apiKey: string, periodKey: string): Promise<number>;
   /** Increment attestation count for an API key in a specific billing period */
   incrementAttestationUsage(apiKey: string, periodKey: string): Promise<number>;
+  /**
+   * CAS-reserve one attestation slot if used < limit. Serialized per key+period
+   * (JSON mutex; Postgres row lock).
+   */
+  reserveAttestationUsage(
+    apiKey: string,
+    periodKey: string,
+    limit: number
+  ): Promise<{ reserved: boolean; used: number }>;
+  /** Release a reservation after a failed preflight/prepare/submit. */
+  releaseAttestationUsage(apiKey: string, periodKey: string): Promise<void>;
 }
 
 function migrateJsonApiKeys(raw: Record<string, ApiKey>): Record<string, ApiKey> {
@@ -119,6 +130,7 @@ function atomicWriteFileSync(path: string, data: string): void {
 class JsonFileStore implements Store {
   private data: PersistedData;
   private lastError?: string;
+  private usageLocks = new Map<string, Promise<void>>();
 
   constructor() {
     this.data = this.load();
@@ -359,10 +371,56 @@ class JsonFileStore implements Store {
 
   async incrementAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
     const usageKey = `${apiKeyLookupId(apiKey)}:${periodKey}`;
-    const current = this.data.attestationUsage[usageKey] || 0;
-    this.data.attestationUsage[usageKey] = current + 1;
-    this.syncPersist();
-    return current + 1;
+    return this.withUsageLock(usageKey, () => {
+      const current = this.data.attestationUsage[usageKey] || 0;
+      this.data.attestationUsage[usageKey] = current + 1;
+      this.syncPersist();
+      return current + 1;
+    });
+  }
+
+  async reserveAttestationUsage(
+    apiKey: string,
+    periodKey: string,
+    limit: number
+  ): Promise<{ reserved: boolean; used: number }> {
+    const usageKey = `${apiKeyLookupId(apiKey)}:${periodKey}`;
+    return this.withUsageLock(usageKey, () => {
+      const current = this.data.attestationUsage[usageKey] || 0;
+      if (limit <= 0 || current >= limit) {
+        return { reserved: false, used: current };
+      }
+      this.data.attestationUsage[usageKey] = current + 1;
+      this.syncPersist();
+      return { reserved: true, used: current + 1 };
+    });
+  }
+
+  async releaseAttestationUsage(apiKey: string, periodKey: string): Promise<void> {
+    const usageKey = `${apiKeyLookupId(apiKey)}:${periodKey}`;
+    return this.withUsageLock(usageKey, () => {
+      const current = this.data.attestationUsage[usageKey] || 0;
+      if (current > 0) {
+        this.data.attestationUsage[usageKey] = current - 1;
+        this.syncPersist();
+      }
+    });
+  }
+
+  private async withUsageLock<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
+    const prev = this.usageLocks.get(key) || Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.usageLocks.set(key, prev.then(() => next));
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.usageLocks.get(key) === next) this.usageLocks.delete(key);
+    }
   }
 
   getData(): PersistedData {
@@ -713,6 +771,58 @@ class PostgresStore implements Store {
       [apiKeyLookupId(apiKey), periodKey]
     );
     return result.rows[0].usage_count;
+  }
+
+  async reserveAttestationUsage(
+    apiKey: string,
+    periodKey: string,
+    limit: number
+  ): Promise<{ reserved: boolean; used: number }> {
+    const hashed = apiKeyLookupId(apiKey);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const sel = await client.query(
+        `SELECT usage_count FROM attestation_usage WHERE api_key = $1 AND month_key = $2 FOR UPDATE`,
+        [hashed, periodKey]
+      );
+      const current = sel.rows[0]?.usage_count || 0;
+      if (limit <= 0 || current >= limit) {
+        await client.query("ROLLBACK");
+        return { reserved: false, used: current };
+      }
+      if (sel.rows[0]) {
+        const upd = await client.query(
+          `UPDATE attestation_usage SET usage_count = usage_count + 1 WHERE api_key = $1 AND month_key = $2 RETURNING usage_count`,
+          [hashed, periodKey]
+        );
+        await client.query("COMMIT");
+        return { reserved: true, used: upd.rows[0].usage_count };
+      }
+      await client.query(
+        `INSERT INTO attestation_usage (api_key, month_key, usage_count) VALUES ($1, $2, 1)`,
+        [hashed, periodKey]
+      );
+      await client.query("COMMIT");
+      return { reserved: true, used: 1 };
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async releaseAttestationUsage(apiKey: string, periodKey: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE attestation_usage SET usage_count = GREATEST(usage_count - 1, 0)
+       WHERE api_key = $1 AND month_key = $2`,
+      [apiKeyLookupId(apiKey), periodKey]
+    );
   }
 }
 

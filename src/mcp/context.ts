@@ -7,6 +7,7 @@ export interface McpRequestContext {
   apiKey?: string;
   apiKeyRecord?: ApiKey;
   paymentSignature?: string;
+  clientIp?: string;
 }
 
 export const mcpAls = new AsyncLocalStorage<McpRequestContext>();

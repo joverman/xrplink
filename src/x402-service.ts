@@ -9,8 +9,11 @@
  */
 
 import crypto from "crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import { getAttestationPrice, isPriceFeedAvailable, readNumber, AttestationPrice } from "./price-service.js";
-import { recordX402Quote, recordX402Settlement } from "./x402-ledger.js";
+import { recordX402Settlement } from "./x402-ledger.js";
+import { lookupXrplTx, TF_PARTIAL_PAYMENT, XrplIssuedAmount, XrplTxResult } from "./xrpl-tx.js";
 
 const DEFAULT_FACILITATOR = "https://xrpl-facilitator-mainnet.t54.ai";
 const RLUSD_HEX = "524C555344000000000000000000000000000000";
@@ -78,8 +81,17 @@ export interface PaymentRecord {
   status: PaymentRecordStatus;
   settlementTx?: string;
   payer?: string;
+  asset?: string;
+  amount?: string;
+  issuer?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+interface PersistFile {
+  quotes: Record<string, StoredQuote>;
+  payments: Record<string, PaymentRecord>;
+  usedPayloadHashes: string[];
 }
 
 type FacilitatorFn = (
@@ -90,8 +102,84 @@ type FacilitatorFn = (
 const quotes = new Map<string, StoredQuote>();
 const payments = new Map<string, PaymentRecord>();
 const usedPayloadHashes = new Set<string>();
+const invoiceLocks = new Map<string, Promise<void>>();
 
 let facilitatorOverride: FacilitatorFn | null = null;
+let stateLoaded = false;
+
+function statePath(): string {
+  return join(process.env.DATA_DIR || "data", "x402-state.json");
+}
+
+function atomicWriteFileSync(path: string, data: string): void {
+  const dir = dirname(path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const tempPath = join(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+  try {
+    writeFileSync(tempPath, data);
+    renameSync(tempPath, path);
+  } catch (err) {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
+}
+
+function persistState(): void {
+  pruneQuotes();
+  const file: PersistFile = {
+    quotes: Object.fromEntries(quotes),
+    payments: Object.fromEntries(payments),
+    usedPayloadHashes: [...usedPayloadHashes],
+  };
+  atomicWriteFileSync(statePath(), JSON.stringify(file));
+}
+
+function loadState(): void {
+  quotes.clear();
+  payments.clear();
+  usedPayloadHashes.clear();
+  const path = statePath();
+  if (!existsSync(path)) return;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as PersistFile;
+    for (const [id, q] of Object.entries(parsed.quotes || {})) quotes.set(id, q);
+    for (const [id, p] of Object.entries(parsed.payments || {})) payments.set(id, p);
+    for (const fp of parsed.usedPayloadHashes || []) usedPayloadHashes.add(fp);
+  } catch {
+    /* start empty if the file is corrupt */
+  }
+  pruneQuotes();
+}
+
+function ensureStateLoaded(): void {
+  if (stateLoaded) return;
+  stateLoaded = true;
+  loadState();
+}
+
+async function withInvoiceLock<T>(invoiceId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = invoiceLocks.get(invoiceId) || Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  invoiceLocks.set(invoiceId, prev.then(() => next));
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (invoiceLocks.get(invoiceId) === next) invoiceLocks.delete(invoiceId);
+  }
+}
+
+export function invoiceBindingHash(invoiceId: string): string {
+  return crypto.createHash("sha256").update(invoiceId, "utf8").digest("hex").toUpperCase();
+}
 
 function facilitatorUrl(): string {
   return process.env.XRPL_FACILITATOR_URL || DEFAULT_FACILITATOR;
@@ -172,6 +260,7 @@ export async function buildPaymentRequired(txHash: string): Promise<{
   quote: StoredQuote;
   price: AttestationPrice;
 }> {
+  ensureStateLoaded();
   const payTo = getPayToAddress();
   if (!payTo) {
     throw new Error("X402_PAY_TO_ADDRESS is not configured");
@@ -234,6 +323,7 @@ export async function buildPaymentRequired(txHash: string): Promise<{
     price,
     createdAt: Date.now(),
   };
+  ensureStateLoaded();
   quotes.set(invoiceId, quote);
   payments.set(invoiceId, {
     invoiceId,
@@ -242,17 +332,7 @@ export async function buildPaymentRequired(txHash: string): Promise<{
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
-
-  recordX402Quote({
-    invoiceId,
-    time: new Date(quote.createdAt).toISOString(),
-    usd: price.usd,
-    flrUsd: price.flrUsdRate,
-    feeFlr: price.flrCost,
-    flrCostUsd: price.flrCost * price.flrUsdRate,
-    xrpUsd: price.xrpUsdRate,
-    assets: accepts.map((a) => ({ asset: a.asset === RLUSD_HEX ? "RLUSD" : a.asset, amount: a.amount })),
-  });
+  persistState();
 
   return { paymentRequired, quote, price };
 }
@@ -280,6 +360,7 @@ export function extractInvoiceId(payload: any): string | null {
 }
 
 export function getQuote(invoiceId: string): StoredQuote | undefined {
+  ensureStateLoaded();
   pruneQuotes();
   const q = quotes.get(invoiceId);
   if (!q) return undefined;
@@ -291,21 +372,26 @@ export function getQuote(invoiceId: string): StoredQuote | undefined {
 }
 
 export function getPaymentRecord(invoiceId: string): PaymentRecord | undefined {
+  ensureStateLoaded();
   return payments.get(invoiceId);
 }
 
 export function markPaymentFdcOk(invoiceId: string): void {
+  ensureStateLoaded();
   const rec = payments.get(invoiceId);
   if (!rec) return;
   rec.status = "fdc_ok";
   rec.updatedAt = Date.now();
+  persistState();
 }
 
 export function markPaymentFdcFailed(invoiceId: string): void {
+  ensureStateLoaded();
   const rec = payments.get(invoiceId);
   if (!rec) return;
   rec.status = "fdc_failed";
   rec.updatedAt = Date.now();
+  persistState();
 }
 
 function matchAccept(payload: any, accepts: X402PaymentRequirements[]): X402PaymentRequirements | null {
@@ -319,7 +405,7 @@ function matchAccept(payload: any, accepts: X402PaymentRequirements[]): X402Paym
     const hit = accepts.find((a) => a.asset.toUpperCase() === String(asset).toUpperCase());
     if (hit) return hit;
   }
-  return accepts[0] || null;
+  return null;
 }
 
 async function callFacilitator(path: "/verify" | "/settle", body: unknown): Promise<{ ok: boolean; json: any }> {
@@ -388,9 +474,119 @@ export async function settleWithFacilitator(
 
 export type ProcessPaymentResult =
   | { outcome: "settled"; invoiceId: string; settlement: X402SettlementResponse; requirements: X402PaymentRequirements }
-  | { outcome: "retry_fdc"; invoiceId: string; settlement: X402SettlementResponse; requirements: X402PaymentRequirements }
+  | { outcome: "retry_fdc"; invoiceId: string; settlement: X402SettlementResponse; requirements?: X402PaymentRequirements }
   | { outcome: "replay"; invoiceId: string; error: string }
   | { outcome: "failed"; error: string };
+
+function deliveredAmount(tx: XrplTxResult): string | XrplIssuedAmount | undefined {
+  return tx.meta?.delivered_amount ?? tx.meta?.DeliveredAmount ?? tx.Amount;
+}
+
+function invoiceBoundOnTx(tx: XrplTxResult, invoiceId: string): boolean {
+  const expected = invoiceBindingHash(invoiceId);
+  const field = String(tx.InvoiceID || "").replace(/^0x/i, "").toUpperCase();
+  if (field && field === expected) return true;
+  for (const wrap of tx.Memos || []) {
+    const data = wrap.Memo?.MemoData || "";
+    if (!data) continue;
+    if (data.replace(/^0x/i, "").toUpperCase() === expected) return true;
+    try {
+      const text = Buffer.from(data, "hex").toString("utf8").replace(/\0+$/, "");
+      if (text === invoiceId) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  return false;
+}
+
+function issuedMatches(
+  amount: string | XrplIssuedAmount | undefined,
+  quoted: string,
+  issuer: string | undefined
+): boolean {
+  if (!amount || typeof amount === "string") return false;
+  const currency = String(amount.currency || "").toUpperCase();
+  const currencyOk = currency === "RLUSD" || currency === RLUSD_HEX.toUpperCase();
+  const issuerOk = !issuer || amount.issuer === issuer;
+  const value = Number(amount.value);
+  const need = Number(quoted);
+  return currencyOk && issuerOk && Number.isFinite(value) && Number.isFinite(need) && value + 1e-12 >= need;
+}
+
+export function assertSettledXrplPayment(
+  tx: XrplTxResult,
+  requirements: X402PaymentRequirements,
+  invoiceId: string
+): string | null {
+  if (tx.validated !== true) return "Settlement transaction is not in a validated ledger";
+  if (tx.TransactionType !== "Payment") return "Settlement transaction is not a Payment";
+  if ((Number(tx.Flags || 0) & TF_PARTIAL_PAYMENT) !== 0) {
+    return "Settlement used tfPartialPayment";
+  }
+  if (tx.Destination !== requirements.payTo) {
+    return "Settlement destination does not match the quoted payTo address";
+  }
+  if (!invoiceBoundOnTx(tx, invoiceId)) {
+    return "Settlement InvoiceID/memo does not match the quoted invoice";
+  }
+  const delivered = deliveredAmount(tx);
+  if (requirements.asset === "XRP") {
+    const drops = typeof delivered === "string" ? delivered : "";
+    if (!/^\d+$/.test(drops)) return "Settlement delivered amount is not native XRP";
+    try {
+      if (BigInt(drops) < BigInt(requirements.amount)) {
+        return "Settlement delivered amount is below the quoted price";
+      }
+    } catch {
+      return "Settlement delivered amount is not native XRP";
+    }
+  } else {
+    if (!issuedMatches(delivered, requirements.amount, requirements.extra.issuer)) {
+      return "Settlement asset, issuer, or delivered amount does not match the quote";
+    }
+  }
+  return null;
+}
+
+async function confirmSettlementOnLedger(
+  settlementTx: string | undefined,
+  requirements: X402PaymentRequirements,
+  invoiceId: string
+): Promise<string | null> {
+  if (!settlementTx || typeof settlementTx !== "string") {
+    return "Facilitator settle did not return a transaction hash";
+  }
+  const lookup = await lookupXrplTx(settlementTx);
+  if (lookup.status !== "found") {
+    return "Could not independently re-read the settlement transaction on XRPL";
+  }
+  return assertSettledXrplPayment(lookup.tx, requirements, invoiceId);
+}
+
+function retryRequirements(rec: PaymentRecord, quote?: StoredQuote): X402PaymentRequirements | undefined {
+  if (rec.asset && rec.amount) {
+    return {
+      scheme: "exact",
+      network: xrplNetwork(),
+      asset: rec.asset,
+      payTo: getPayToAddress(),
+      amount: rec.amount,
+      maxTimeoutSeconds: maxTimeoutSeconds(),
+      extra: {
+        areFeesSponsored: false,
+        assetTransferMethod: "sequence",
+        invoiceId: rec.invoiceId,
+        sourceTag: XRPL_SOURCE_TAG,
+        issuer: rec.issuer,
+        resource: "/api/v1/verify/xrp-payment",
+        txHash: rec.txHash,
+      },
+    };
+  }
+  if (!quote) return undefined;
+  return quote.accepts.find((a) => a.asset === rec.asset) || undefined;
+}
 
 /**
  * Verify then settle a PAYMENT-SIGNATURE against a stored quote.
@@ -414,6 +610,17 @@ export async function processX402Payment(
     return { outcome: "failed", error: "Payment payload missing invoiceId" };
   }
 
+  return withInvoiceLock(invoiceId, () => processX402PaymentLocked(paymentSignature, expectedTxHash, paymentPayload, invoiceId));
+}
+
+async function processX402PaymentLocked(
+  paymentSignature: string,
+  expectedTxHash: string,
+  paymentPayload: any,
+  invoiceId: string
+): Promise<ProcessPaymentResult> {
+  ensureStateLoaded();
+
   const rec = payments.get(invoiceId);
   if (rec && rec.txHash !== expectedTxHash) {
     return { outcome: "failed", error: "Payment invoice is bound to a different transaction hash" };
@@ -425,10 +632,6 @@ export async function processX402Payment(
 
   if (rec?.status === "settled" || rec?.status === "fdc_failed") {
     const quote = quotes.get(invoiceId);
-    const requirements = quote?.accepts[0];
-    if (!requirements) {
-      return { outcome: "failed", error: "Previous payment found but quote expired; contact support with settlement tx" };
-    }
     return {
       outcome: "retry_fdc",
       invoiceId,
@@ -437,7 +640,7 @@ export async function processX402Payment(
         transaction: rec.settlementTx,
         payer: rec.payer,
       },
-      requirements,
+      requirements: retryRequirements(rec, quote),
     };
   }
 
@@ -469,6 +672,11 @@ export async function processX402Payment(
     return { outcome: "failed", error: settlement.error || "Payment settlement failed" };
   }
 
+  const ledgerError = await confirmSettlementOnLedger(settlement.transaction, requirements, invoiceId);
+  if (ledgerError) {
+    return { outcome: "failed", error: ledgerError };
+  }
+
   usedPayloadHashes.add(fp);
   payments.set(invoiceId, {
     invoiceId,
@@ -476,9 +684,13 @@ export async function processX402Payment(
     status: "settled",
     settlementTx: settlement.transaction,
     payer: settlement.payer,
+    asset: requirements.asset,
+    amount: requirements.amount,
+    issuer: requirements.extra.issuer,
     createdAt: rec?.createdAt || Date.now(),
     updatedAt: Date.now(),
   });
+  persistState();
 
   recordX402Settlement({
     invoiceId,
@@ -517,9 +729,27 @@ export function resetX402ForTests(): void {
   payments.clear();
   usedPayloadHashes.clear();
   facilitatorOverride = null;
+  stateLoaded = true;
+  try {
+    if (existsSync(statePath())) unlinkSync(statePath());
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Simulate a process restart: drop memory and reload DATA_DIR state. */
+export function reloadX402StateFromDiskForTests(): void {
+  stateLoaded = false;
+  ensureStateLoaded();
+}
+
+export function listStoredQuotesForTests(): StoredQuote[] {
+  ensureStateLoaded();
+  return [...quotes.values()];
 }
 
 export function getStoredQuoteCountForTests(): number {
+  ensureStateLoaded();
   return quotes.size;
 }
 

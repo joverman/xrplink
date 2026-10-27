@@ -21,11 +21,41 @@ import { fetchXrplTx, RIPPLE_EPOCH, FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS, FDC_XRP_P
 import { attestationViewForCaller, callerOwnsAttestation, NETWORK_STATUS_URI } from "./attestation-view.js";
 import { assertSafeWebhookUrl, UnsafeWebhookUrlError } from "./webhook-url.js";
 import { MAX_WEBHOOKS_PER_KEY } from "./store.js";
+import {
+  LIMITS,
+  WINDOW_MS,
+  authWindowMs,
+  checkVerifyRateLimit,
+  clientIp,
+  consumeRateLimit,
+  rateLimit,
+  rateLimitIpAndEmail,
+} from "./rate-limit.js";
 
 const router = Router();
 
 function isHexTxHash(v: string): boolean {
   return /^[0-9A-Fa-f]{64}$/.test(v);
+}
+
+function verifyRateLimit(req: Request, res: Response, next: import("express").NextFunction) {
+  const key = req.headers["x-api-key"];
+  const hit = checkVerifyRateLimit(clientIp(req), typeof key === "string" ? key : undefined);
+  if (!hit.allowed) {
+    res.setHeader("Retry-After", String(hit.retryAfterSec));
+    return res.status(429).json(formatError("RATE_LIMITED", { limit: String(LIMITS.verifyIp), window: "verify" }));
+  }
+  next();
+}
+
+function allowReceiptXrplLookup(req: Request, res: Response): boolean {
+  const hit = consumeRateLimit(`receipt-xrpl:${clientIp(req)}`, LIMITS.receiptIp, WINDOW_MS.minute);
+  if (!hit.allowed) {
+    res.setHeader("Retry-After", String(hit.retryAfterSec));
+    res.status(429).json(formatError("RATE_LIMITED", { limit: String(LIMITS.receiptIp), window: "receipt" }));
+    return false;
+  }
+  return true;
 }
 
 function publicNavHtml(): string {
@@ -64,7 +94,10 @@ function requestUser(req: Request) {
 
 // --- Auth endpoints ---
 
-router.post("/auth/signup", async (req: Request, res: Response) => {
+router.post(
+  "/auth/signup",
+  rateLimit({ name: "signup", limit: LIMITS.signupIp, windowMs: authWindowMs() }),
+  async (req: Request, res: Response) => {
   const { email, password } = req.body || {};
   const result = await import("./auth.js").then((m) => m.signup(email, password));
   if (!result.ok) {
@@ -74,7 +107,10 @@ router.post("/auth/signup", async (req: Request, res: Response) => {
   return res.status(201).json({ token: result.token, apiKey: result.apiKey });
 });
 
-router.post("/auth/login", async (req: Request, res: Response) => {
+router.post(
+  "/auth/login",
+  rateLimit({ name: "login", limit: LIMITS.loginIp, windowMs: authWindowMs() }),
+  async (req: Request, res: Response) => {
   const { email, password } = req.body || {};
   const result = await import("./auth.js").then((m) => m.login(email, password));
   if (!result.ok) {
@@ -96,7 +132,16 @@ router.get("/auth/session", (req: Request, res: Response) => {
   return res.json({ user: { id: user.id, email: user.email, tier: user.tier } });
 });
 
-router.post("/auth/reset-password", async (req: Request, res: Response) => {
+router.post(
+  "/auth/reset-password",
+  rateLimitIpAndEmail({
+    name: "reset",
+    ipLimit: LIMITS.resetIp,
+    emailLimit: LIMITS.resetEmail,
+    windowMs: authWindowMs(),
+    emailFrom: (req) => req.body?.email,
+  }),
+  async (req: Request, res: Response) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json(formatError("MISSING_EMAIL"));
   await import("./auth.js").then((m) => m.generateResetToken(email));
@@ -155,7 +200,7 @@ router.post("/api/v1/keys/rotate", requireSessionCookie, requireSameOrigin, asyn
   });
 });
 
-router.post("/api/v1/dashboard/verify", requireSessionCookie, requireSameOrigin, async (req: Request, res: Response) => {
+router.post("/api/v1/dashboard/verify", requireSessionCookie, requireSameOrigin, verifyRateLimit, async (req: Request, res: Response) => {
   const user = (req as any).user;
   const txHash = req.body?.txHash;
   const keyId = user.apiKeyIds?.[0];
@@ -614,7 +659,16 @@ async function handleContact(e) {
 </body></html>`);
 });
 
-router.post("/contact", async (req: Request, res: Response) => {
+router.post(
+  "/contact",
+  rateLimitIpAndEmail({
+    name: "contact",
+    ipLimit: LIMITS.contactIp,
+    emailLimit: LIMITS.contactEmail,
+    windowMs: authWindowMs(),
+    emailFrom: (req) => req.body?.email,
+  }),
+  async (req: Request, res: Response) => {
   const { name, email, message } = req.body || {};
   if (!name || !email || !message) {
     return res.status(400).json(formatError("MISSING_PARAMS", undefined, "Name, email, and message are required"));
@@ -1550,6 +1604,7 @@ router.get("/receipt/:txHash", async (req: Request, res: Response) => {
     }
 
     // No attestation - check XRPL
+    if (!allowReceiptXrplLookup(req, res)) return;
     const txData = await fetchXrplTx(txHash);
     if (!txData) {
       return res.status(404).json({ error: "NOT_FOUND", message: "Transaction not found on XRP Ledger", txHash });
@@ -1656,6 +1711,7 @@ ${attestation.status === "pending" ? `<div class="row"><span class="key">Status<
   }
 
   // No attestation found — check if tx exists on XRPL
+  if (!allowReceiptXrplLookup(req, res)) return;
   const txData = await fetchXrplTx(txHash);
 
   if (!txData) {
@@ -1782,7 +1838,7 @@ router.get("/mcp/prompts", (_req: Request, res: Response) => {
  * Missing key, invalid key, or over-quota key can pay per attestation via x402
  * (HTTP 402 + PAYMENT-REQUIRED). Subscribers inside quota are never asked to pay.
  */
-router.post("/api/v1/verify/xrp-payment", async (req: Request, res: Response) => {
+router.post("/api/v1/verify/xrp-payment", verifyRateLimit, async (req: Request, res: Response) => {
   const { txHash } = req.body;
   const result = await attestXrpPayment({
     txHash,

@@ -30,9 +30,11 @@ const catalog: Record<string, ErrorEntry> = {
     docsUrl: "xrplink://docs/config",
   },
   RATE_LIMITED: {
-    message: "Rate limit exceeded for this API key",
+    message: "Rate limit exceeded",
     context: (ctx) => ({
-      suggestedAction: `Your tier (${ctx.tier || "unknown"}) allows ${ctx.limit || "?"} requests per minute. Wait and retry, or upgrade to a higher tier.`,
+      suggestedAction: ctx.tier
+        ? `Your tier (${ctx.tier}) allows ${ctx.limit || "?"} requests per minute. Wait and retry, or upgrade to a higher tier.`
+        : "Wait and retry. This endpoint is rate-limited per IP and, when present, per API key or email.",
     }),
     docsUrl: "xrplink://docs/config",
   },
