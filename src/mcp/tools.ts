@@ -2,13 +2,15 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { config, activeNetwork } from "../config.js";
 import { store } from "../store.js";
 import * as fdc from "../fdc-service.js";
+import { FdcVerifierError } from "../fdc-service.js";
 import { whiteLabel } from "../white-label.js";
 import { formatError } from "./errors.js";
+import { preflightXrplPayment, FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "../xrpl-tx.js";
 
 export const tools: Tool[] = [
   {
     name: "verify_xrp_payment",
-    description: "Submit an XRP transaction hash for FDC attestation on Flare. Subscription API keys inside quota are not charged extra (Paid: 20 mainnet attestations per billing period; Pro: 100). Without a key, or over quota, the tool returns an x402 payment challenge (RLUSD first, then XRP via the XRPL facilitator). Over-quota subscribers can upgrade or buy a single extra attestation. A valid PAYMENT-SIGNATURE pays for exactly one attestation. Status checks are free. Proof takes ~90-180 seconds; use get_attestation_status.",
+    description: "Submit a native XRP Payment hash for FDC attestation on Flare. Only Payments from the last 14 days can be proven. Subscription API keys inside quota are not charged extra (Paid: 20 mainnet attestations per billing period; Pro: 100). Failed prepares do not consume quota. Without a key, or over quota, the tool returns an x402 payment challenge (RLUSD first, then XRP via the XRPL facilitator). Over-quota subscribers can upgrade or buy a single extra attestation. A valid PAYMENT-SIGNATURE pays for exactly one attestation. Status checks are free. Proof takes ~90-180 seconds; use get_attestation_status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -89,6 +91,17 @@ export async function handleVerifyXrpPayment(args: Record<string, unknown>) {
     } catch {}
   }
 
+  const preflight = await preflightXrplPayment(cleanHash);
+  if (!preflight.ok) {
+    const ctx: Record<string, string> = {};
+    if (preflight.ageDays != null) ctx.ageDays = String(preflight.ageDays);
+    if (preflight.windowDays != null) ctx.windowDays = String(preflight.windowDays);
+    if (preflight.closedAt) ctx.closedAt = preflight.closedAt;
+    if (preflight.transactionType) ctx.transactionType = preflight.transactionType;
+    const err = formatError(preflight.code, Object.keys(ctx).length ? ctx : undefined);
+    return { isError: true, content: [{ type: "text" as const, text: `${err.message}\n\n${err.suggestedAction || ""}` }] };
+  }
+
   const attestation = await store.createAttestation(cleanHash);
   try {
     const proofOwner = fdc.getProofOwner();
@@ -110,7 +123,9 @@ export async function handleVerifyXrpPayment(args: Record<string, unknown>) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await store.updateAttestation(attestation.id, { status: "failed", error: message });
-    return { isError: true, content: [{ type: "text" as const, text: `Submission failed: ${message}` }] };
+    const code = err instanceof FdcVerifierError || message.startsWith("Verifier ") ? "VERIFIER_ERROR" : "SUBMIT_FAILED";
+    const formatted = formatError(code, { message });
+    return { isError: true, content: [{ type: "text" as const, text: `${formatted.message}\n\n${message}\n\n${formatted.suggestedAction || ""}` }] };
   }
 }
 
@@ -147,6 +162,8 @@ export async function handleGetServerInfo() {
       paymentVerifier: config.paymentVerifierAddress || "not configured",
       chainId: activeNetwork.chainId,
       fdcHub: activeNetwork.fdcHub,
+      verifierBaseUrl: activeNetwork.verifierBaseUrl,
+      xrpPaymentLookbackDays: FDC_XRP_PAYMENT_LUT_LIMIT_DAYS,
       companyUrl: wl.companyUrl,
       uptime: process.uptime(),
       attestationCount: attestations.length,

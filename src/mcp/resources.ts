@@ -1,6 +1,7 @@
 import { config, activeNetwork } from "../config.js";
 import { store } from "../store.js";
 import { whiteLabel } from "../white-label.js";
+import { FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS, FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "../xrpl-tx.js";
 
 interface ResourceTemplate {
   uri: string;
@@ -29,7 +30,7 @@ const templates: ResourceTemplate[] = [
     name: "Network Information",
     description: "Current Flare network details, contract addresses, and RPC endpoints",
     handler: () =>
-      `# Network: ${config.network}\n\n| Parameter | Value |\n|-----------|-------|\n| RPC | ${activeNetwork.rpc} |\n| Chain ID | ${activeNetwork.chainId} |\n| FdcHub | ${activeNetwork.fdcHub} |\n| Source ID | ${activeNetwork.sourceId} |\n| First Voting Round | ${activeNetwork.firstVotingRoundStart} |\n| DA Layer | ${activeNetwork.daLayerUrl} |\n| Verifier API | ${activeNetwork.verifierBaseUrl} |\n| PaymentVerifier | ${config.paymentVerifierAddress || "not deployed"} |\n\n## Brand: ${whiteLabel.get().brandName}\n## Company: ${whiteLabel.get().companyUrl}`,
+      `# Network: ${config.network}\n\n| Parameter | Value |\n|-----------|-------|\n| RPC | ${activeNetwork.rpc} |\n| Chain ID | ${activeNetwork.chainId} |\n| FdcHub | ${activeNetwork.fdcHub} |\n| Source ID | ${activeNetwork.sourceId} |\n| First Voting Round | ${activeNetwork.firstVotingRoundStart} |\n| DA Layer | ${activeNetwork.daLayerUrl} |\n| Verifier API | ${activeNetwork.verifierBaseUrl} |\n| XRPPayment lookback | ${FDC_XRP_PAYMENT_LUT_LIMIT_DAYS} days (${FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS} seconds, IXRPPayment lutlimit 0x127500) |\n| PaymentVerifier | ${config.paymentVerifierAddress || "not deployed"} |\n\nFlare FDC XRPPayment can only prove native XRP Payments whose ledger close time is within this lookback window. Older hashes exist on XRPL but the hosted verifier returns INVALID: TRANSACTION DOES NOT EXIST.\n\n## Brand: ${whiteLabel.get().brandName}\n## Company: ${whiteLabel.get().companyUrl}`,
   },
   {
     uri: "xrplink://docs/tools",

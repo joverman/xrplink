@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "description": "XRPLink - XRP Payment attestation on Flare FDC",
   "scripts": {
-    "test": "npx hardhat test && node --import tsx --test test/hardening.test.ts test/landing.test.ts test/session.test.ts",
+    "test": "npx hardhat test && node --import tsx --test test/hardening.test.ts test/landing.test.ts test/session.test.ts test/fdc-preflight.test.ts",
     "test:contracts": "npx hardhat test",
-    "test:app": "node --import tsx --test test/hardening.test.ts test/mcp-http.test.ts test/mcp-auth-quota.test.ts test/x402.test.ts test/landing.test.ts test/session.test.ts",
+    "test:app": "node --import tsx --test test/hardening.test.ts test/mcp-http.test.ts test/mcp-auth-quota.test.ts test/x402.test.ts test/landing.test.ts test/session.test.ts test/fdc-preflight.test.ts",
     "typecheck": "tsc --noEmit",
     "compile": "npx hardhat compile",
     "faucet": "tsx scripts/faucet.ts",

@@ -129,6 +129,8 @@ Connect via stdio: `npm run start:mcp`
     XRP Testnet / Mainnet
 ```
 
+**Lookback:** Flare's `XRPPayment` attestation (`IXRPPayment` lutlimit `0x127500`) can only prove **native XRP Payments from the last 14 days**. Older hashes still exist on XRPL, but the hosted verifier returns `INVALID: TRANSACTION DOES NOT EXIST`. XRPLink preflights the ledger and returns `TX_TOO_OLD` instead of a misleading FdcHub error. Failed prepares do not consume monthly quota.
+
 **Key data flow:**
 1. XRP tx happens on XRP Ledger
 2. Verifier API fetches tx details, computes MIC, returns ABI-encoded request

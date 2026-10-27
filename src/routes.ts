@@ -15,6 +15,7 @@ import {
 } from "./types.js";
 import { attestXrpPayment } from "./attest.js";
 import { ATTESTATION_LIMITS } from "./attestation-quota.js";
+import { fetchXrplTx, RIPPLE_EPOCH, FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS, FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "./xrpl-tx.js";
 
 const router = Router();
 
@@ -344,7 +345,7 @@ ${publicNavHtml()}
 <p>No account or subscription required. POST without an API key (or over quota) returns HTTP 402 with payment requirements. Pay in RLUSD or XRP on the XRP Ledger, then retry with PAYMENT-SIGNATURE. Price tracks the Flare (FLR) attestation fee from the configured floor up to the cap. One payment = one attestation.</p>
 
 <h3>Verify an XRP payment</h3>
-<div class="endpoint"><span class="method post">POST</span><span class="path">/api/v1/verify/xrp-payment</span><span class="badge api-key" style="margin-left:0.5rem">API key or x402</span><div class="desc">Submits a transaction hash for attestation. Subscribers inside quota skip payment. Otherwise the server returns HTTP 402 with x402 requirements; retry with PAYMENT-SIGNATURE after paying. One payment = one attestation.</div></div>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/api/v1/verify/xrp-payment</span><span class="badge api-key" style="margin-left:0.5rem">API key or x402</span><div class="desc">Submits a native XRP Payment hash for attestation. Flare's FDC XRPPayment type can only prove Payments from the last 14 days. Subscribers inside quota skip payment. Otherwise the server returns HTTP 402 with x402 requirements; retry with PAYMENT-SIGNATURE after paying. One payment = one attestation. Failed prepares (too old, not on ledger, verifier INVALID) do not consume monthly quota.</div></div>
 <pre><code>curl -X POST https://xrp-link.com/api/v1/verify/xrp-payment \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: sk_live_..." \\
@@ -436,6 +437,11 @@ npm run start:mcp</code></pre>
 <tr><td><code>PRICE_UNAVAILABLE</code></td><td>503</td><td>FTSO and Kraken price feeds stale or down; pay-per-use fails closed</td></tr>
 <tr><td><code>RATE_LIMITED</code></td><td>429</td><td>Per-minute limit exceeded for your tier</td></tr>
 <tr><td><code>INVALID_TX_HASH</code></td><td>400</td><td>Not a valid 64-hex transaction hash</td></tr>
+<tr><td><code>TX_TOO_OLD</code></td><td>400</td><td>Payment is older than Flare FDC's 14-day XRPPayment lookback</td></tr>
+<tr><td><code>TX_NOT_ON_LEDGER</code></td><td>404</td><td>Hash not found on the XRP Ledger</td></tr>
+<tr><td><code>TX_NOT_PAYMENT</code></td><td>400</td><td>Hash is not an XRPL Payment transaction</td></tr>
+<tr><td><code>TX_NOT_NATIVE_XRP</code></td><td>400</td><td>Payment is an issued currency (IOU), not native XRP</td></tr>
+<tr><td><code>VERIFIER_ERROR</code></td><td>400/502</td><td>Flare hosted verifier rejected the hash (not an FdcHub failure)</td></tr>
 <tr><td><code>SUBMIT_FAILED</code></td><td>500</td><td>Attestation submission to FdcHub failed</td></tr>
 <tr><td><code>NOT_FOUND</code></td><td>404</td><td>Resource not found</td></tr>
 <tr><td><code>FORBIDDEN</code></td><td>403</td><td>Requires a higher plan tier</td></tr>
@@ -565,6 +571,9 @@ router.get("/health", async (_req: Request, res: Response) => {
     sourceId: activeNetwork.sourceId,
     chainId: activeNetwork.chainId,
     fdcHub: activeNetwork.fdcHub,
+    verifierBaseUrl: activeNetwork.verifierBaseUrl,
+    xrpPaymentLookbackSeconds: FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS,
+    xrpPaymentLookbackDays: FDC_XRP_PAYMENT_LUT_LIMIT_DAYS,
     uptime: process.uptime(),
     storage: storeHealth,
   });
@@ -598,7 +607,7 @@ ${baseUrl}
 ## REST Endpoints
 
 ### Attestation (API key or x402 payment)
-- POST /api/v1/verify/xrp-payment - Submit txHash for attestation. Subscribers inside quota skip payment. Otherwise HTTP 402 (x402).
+- POST /api/v1/verify/xrp-payment - Submit a native XRP Payment hash (last 14 days). Subscribers inside quota skip payment. Failed prepares do not consume quota. Otherwise HTTP 402 (x402).
 - GET /api/v1/status/:id - Check attestation status by UUID
 - GET /api/v1/status-by-tx/:txHash - Find attestation by txHash
 
@@ -670,7 +679,7 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
         post: {
           tags: ["Attestation"],
           summary: "Verify an XRP payment",
-          description: "Submit an XRP transaction hash for FDC attestation. Subscription API keys inside quota are not charged extra (Paid: 20 mainnet attestations per billing period; Pro: 100). Without a key or over quota, the server returns HTTP 402 with x402 payment requirements (RLUSD first, then XRP). Over-quota subscribers can upgrade or buy a single extra attestation. Retry with PAYMENT-SIGNATURE after paying. One payment authorizes exactly one attestation. Proof takes ~90-180 seconds.",
+          description: "Submit a native XRP Payment hash for FDC attestation. Only Payments whose XRPL close time is within 14 days can be proven (IXRPPayment lutlimit). Subscription API keys inside quota are not charged extra (Paid: 20 mainnet attestations per billing period; Pro: 100). Failed prepares do not consume quota. Without a key or over quota, the server returns HTTP 402 with x402 payment requirements (RLUSD first, then XRP). Over-quota subscribers can upgrade or buy a single extra attestation. Retry with PAYMENT-SIGNATURE after paying. One payment authorizes exactly one attestation. Proof takes ~90-180 seconds.",
           security: [{ ApiKeyAuth: [] }, { X402: [] }],
           requestBody: {
             required: true,
@@ -1233,60 +1242,6 @@ router.delete("/mcp", handleMcpRequest);
 
 // --- Public Receipt Page ---
 
-const XRP_RPC_ENDPOINTS = [
-  "https://s1.ripple.com:51234",
-  "https://s2.ripple.com:51234",
-  "https://xrplcluster.com",
-];
-
-interface XrplTxResult {
-  Account: string;
-  Destination: string;
-  Amount: string;
-  Fee: string;
-  Memos?: { Memo: { MemoData?: string; MemoType?: string } }[];
-  DestinationTag?: number;
-  TransactionType: string;
-  meta?: { TransactionResult?: string };
-  date?: number;
-}
-
-async function fetchXrplTx(txHash: string): Promise<XrplTxResult | null> {
-  let lastError: Error | null = null;
-
-  for (const endpoint of XRP_RPC_ENDPOINTS) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          method: "tx",
-          params: [{ transaction: txHash, binary: false }],
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      const data: any = await res.json();
-      if (data.result?.Account) return data.result;
-      if (data.result?.error === "txnNotFound") return null;
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`XRPL endpoint ${endpoint} failed:`, lastError.message);
-      continue;
-    }
-  }
-
-  if (lastError) {
-    console.error("All XRPL endpoints failed:", lastError.message);
-  }
-  return null;
-}
-
 function formatXrpAmount(drops: string): string {
   const n = BigInt(drops);
   const whole = n / 1000000n;
@@ -1297,8 +1252,7 @@ function formatXrpAmount(drops: string): string {
 
 function formatTimestamp(unix: number): string {
   // XRPL timestamps are Ripple epoch (2000-01-01) + seconds
-  const rippleEpoch = 946684800;
-  return new Date((rippleEpoch + unix) * 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  return new Date((RIPPLE_EPOCH + unix) * 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC";
 }
 
 function escapeHtml(s: string): string {
@@ -1365,7 +1319,7 @@ router.get("/receipt/:txHash", async (req: Request, res: Response) => {
         sourceAddress: txData.Account,
         destinationAddress: txData.Destination,
         amount: txData.Amount,
-        amountFormatted: txData.Amount ? formatXrpAmount(txData.Amount) : null,
+        amountFormatted: typeof txData.Amount === "string" ? formatXrpAmount(txData.Amount) : null,
         fee: txData.Fee,
         memo: memoStr || null,
         destinationTag: txData.DestinationTag || null,
@@ -1485,7 +1439,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;c
   }
 
   // Transaction exists on XRPL but no receipt yet
-  const amountFormatted = txData.Amount ? formatXrpAmount(txData.Amount) : "—";
+  const amountFormatted = typeof txData.Amount === "string" ? formatXrpAmount(txData.Amount) : "—";
   const memoData = txData.Memos?.[0]?.Memo?.MemoData || "";
   const memoStr = memoData ? Buffer.from(memoData, "hex").toString("utf8").replace(/\0+$/, "") : "";
   const txDate = txData.date ? formatTimestamp(txData.date) : "—";
@@ -1532,7 +1486,7 @@ h1{font-size:1.25rem;margin-bottom:0.25rem;color:#0f172a}
 <div class="section-title" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:0.75rem;font-weight:600">Transaction Details</div>
 <div class="row"><span class="key">Transaction Hash</span><span class="value">${txHash}</span></div>
 <div class="row"><span class="key">Source Address</span><span class="value">${escapeHtml(txData.Account)}</span></div>
-<div class="row"><span class="key">Destination</span><span class="value">${escapeHtml(txData.Destination)}</span></div>
+<div class="row"><span class="key">Destination</span><span class="value">${escapeHtml(txData.Destination || "")}</span></div>
 <div class="row"><span class="key">Amount</span><span class="value">${amountFormatted}</span></div>
 <div class="row"><span class="key">Timestamp</span><span class="value">${txDate}</span></div>
 ${memoStr ? `<div class="row"><span class="key">Memo</span><span class="value">${escapeHtml(memoStr)}</span></div>` : ""}

@@ -14,7 +14,7 @@ export interface NetworkConfig {
 
 const network: Network = (process.env.FLARE_NETWORK as Network) || "coston2";
 
-const networks: Record<Network, NetworkConfig> = {
+export const networkConfigs: Record<Network, NetworkConfig> = {
   coston2: {
     rpc: "https://coston2-api.flare.network/ext/C/rpc",
     chainId: 114,
@@ -35,7 +35,7 @@ const networks: Record<Network, NetworkConfig> = {
   },
 };
 
-export const activeNetwork = networks[network];
+export const activeNetwork = networkConfigs[network];
 
 const resolvedKey = network === "flare"
   ? (process.env.PRIVATE_KEY_FLARE || "")

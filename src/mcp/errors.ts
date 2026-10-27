@@ -39,8 +39,32 @@ const catalog: Record<string, ErrorEntry> = {
   SUBMIT_FAILED: {
     message: "Failed to submit attestation request to FdcHub",
     suggestedAction:
-      "Check that your wallet has sufficient FLR balance for the attestation fee (1 FLR minimum). Verify the XRP transaction hash is valid and the transaction exists on the XRP Ledger.",
+      "The verifier accepted this payment, but submitting to FdcHub failed. Check that PRIVATE_KEY_FLARE is a funded Flare mainnet wallet with enough FLR for SUBMIT_FEE_FLR (default 20 FLR).",
     docsUrl: "xrplink://docs/network",
+  },
+  TX_TOO_OLD: {
+    message: "This XRP payment is older than the Flare FDC 14-day lookback window",
+    suggestedAction:
+      "Flare's XRPPayment attestation (IXRPPayment lutlimit 0x127500 = 14 days) cannot prove payments older than that. Retry with a native XRP Payment whose ledger close time is within the last 14 days.",
+    docsUrl: "xrplink://docs/network",
+  },
+  TX_NOT_ON_LEDGER: {
+    message: "No transaction with this hash was found on the XRP Ledger",
+    suggestedAction:
+      "Confirm the 64-character hash is a validated XRPL transaction on the same network this server uses (mainnet when FLARE_NETWORK=flare). Very new payments may need a few ledgers before they appear.",
+    docsUrl: "xrplink://docs/tools",
+  },
+  TX_NOT_PAYMENT: {
+    message: "Flare FDC XRPPayment can only attest XRPL Payment transactions",
+    suggestedAction:
+      "Submit a native XRP Payment hash, not Offers, TrustSet, or other transaction types.",
+    docsUrl: "xrplink://docs/tools",
+  },
+  TX_NOT_NATIVE_XRP: {
+    message: "Flare FDC XRPPayment can only attest native XRP Payments, not issued-currency (IOU) payments",
+    suggestedAction:
+      "Submit a Payment whose Amount is XRP drops, not an issued currency such as RLUSD.",
+    docsUrl: "xrplink://docs/tools",
   },
   NOT_FOUND: {
     message: "The requested resource was not found",
@@ -79,9 +103,9 @@ const catalog: Record<string, ErrorEntry> = {
     docsUrl: "xrplink://docs/tools",
   },
   VERIFIER_ERROR: {
-    message: "The Flare verifier API returned an error",
+    message: "The Flare verifier API rejected this attestation request",
     suggestedAction:
-      "The XRP transaction may not exist, or the verifier API is temporarily unavailable. Verify the txHash and retry.",
+      "The hosted XRPPayment verifier could not prove this hash. Typical causes: the payment is older than 14 days, it is not a native XRP Payment, it is on the other XRPL network (mainnet vs testnet), or it does not yet have enough ledger confirmations. Wait a few ledgers and retry, or use a Payment from the last 14 days.",
     docsUrl: "xrplink://docs/network",
   },
   DA_LAYER_ERROR: {
