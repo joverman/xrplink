@@ -89,3 +89,58 @@ router.get("/auth/session", (req: Request, res: Response) => {
   setSessionCookie(res, issueSessionToken(user));
   return res.json({ user: { id: user.id, email: user.email, tier: user.tier } });
 });
+
+router.post("/auth/reset-password", async (req: Request, res: Response) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json(formatError("MISSING_EMAIL"));
+  await import("./auth.js").then((m) => m.generateResetToken(email));
+  return res.json({ ok: true });
+});
+
+router.post("/auth/reset-password/confirm", async (req: Request, res: Response) => {
+  const { token, password } = req.body || {};
+  if (!token || !password) return res.status(400).json(formatError("MISSING_PARAMS"));
+  const result = await import("./auth.js").then((m) => m.resetPassword(token, password));
+  if (!result.ok) return res.status(401).json(formatError("AUTH_FAILED", { message: result.error || "Reset failed" }));
+  return res.json({ ok: true });
+});
+
+router.get("/me", requireAuth, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  setSessionCookie(res, issueSessionToken(user));
+  const allKeys = await store.listApiKeys();
+  const keys = allKeys.filter((k) => user.apiKeyIds.includes(k.key));
+  res.json({ user: { id: user.id, email: user.email, tier: user.tier, createdAt: user.createdAt, usageCount: keys.reduce((s, k) => s + k.usageCount, 0) }, apiKeys: keys });
+});
+
+router.get("/receipts", requireAuth, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const allKeys = await store.listApiKeys();
+  const keys = allKeys.filter((k) => user.apiKeyIds.includes(k.key));
+  const all = await store.listAttestations();
+  res.json(all.slice(0, 50));
+});
+
+// --- Billing endpoints ---
+
+router.post("/billing/subscribe", requireAuth, async (req: Request, res: Response) => {
+  const { tier } = req.body || {};
+  if (!tier || !["paid", "pro"].includes(tier)) {
+    return res.status(400).json(formatError("INVALID_TIER"));
+  }
+  const user = (req as any).user;
+  const { createCheckoutSession } = await import("./billing.js");
+  const session = await createCheckoutSession(user, tier);
+  if (!session) return res.status(500).json(formatError("BILLING_ERROR"));
+  return res.json({ url: session.url });
+});
+
+router.get("/billing/portal", requireAuth, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const { createPortalSession } = await import("./billing.js");
+  const session = await createPortalSession(user);
+  if (!session) return res.status(500).json(formatError("BILLING_ERROR"));
+  return res.json({ url: session.url });
+});
+
+export default router;
