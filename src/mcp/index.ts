@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { config } from "../config.js";
-import { tools, handleVerifyXrpPayment, handleGetAttestationStatus, handleLookupByTx, handleGetAttestationByRound, handleGetServerInfo } from "./tools.js";
+import { tools, handleVerifyXrpPayment, handleGetAttestationStatus, handleLookupByTx, handleGetServerInfo } from "./tools.js";
 import { getResources, readResource } from "./resources.js";
 import { getPromptDefs, getPromptContent } from "./prompts.js";
 
@@ -18,7 +18,6 @@ const toolHandlers: Record<string, (args: Record<string, unknown>) => Promise<an
   verify_xrp_payment: handleVerifyXrpPayment,
   get_attestation_status: handleGetAttestationStatus,
   lookup_attestation_by_tx: handleLookupByTx,
-  get_attestation_by_round: handleGetAttestationByRound,
   get_server_info: handleGetServerInfo,
 };
 

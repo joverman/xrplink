@@ -66,16 +66,16 @@ Live on Flare mainnet. End-to-end pipeline validated: XRP tx â†’ verifier API â†
 | `POST` | `/auth/signup` | Public | Create account + free API key |
 | `POST` | `/auth/login` | Public | Log in and get a session token |
 | `GET` | `/me` | Bearer token | Current user info and API keys |
-| `GET` | `/health` | Public | Server status and network info |
+| `GET` | `/health` | Public | Liveness (`{"status":"ok"}`) |
 | `GET` | `/dashboard` | Public | HTML user dashboard |
 | `GET` | `/receipt/:txHash` | Public | View a receipt (HTML) |
 | `POST` | `/api/v1/verify/xrp-payment` | API key | Attest an XRP tx |
 | `GET` | `/api/v1/status/:id` | API key | Check attestation by UUID |
 | `GET` | `/api/v1/status-by-tx/:txHash` | API key | Check attestation by txHash |
-| `POST` | `/api/v1/webhooks` | API key | Register webhook callback |
+| `POST` | `/api/v1/webhooks` | API key | Register HTTPS webhook for an attestation this key owns |
 | `POST` | `/billing/subscribe` | Bearer token | Upgrade subscription |
 | `GET` | `/billing/portal` | Bearer token | Manage billing |
-| `GET` | `/mcp/resources` | Public | List MCP resources |
+| `GET` | `/mcp/resources` | Public | List MCP resource metadata (no bodies) |
 | `GET` | `/mcp/prompts` | Public | List MCP prompts |
 | `POST` | `/api/v1/keys/rotate` | Session cookie | Regenerate the signed-in user's API key |
 | `POST` | `/api/v1/dashboard/verify` | Session cookie | Attest from the dashboard without pasting a key |
@@ -87,9 +87,8 @@ Live on Flare mainnet. End-to-end pipeline validated: XRP tx â†’ verifier API â†
 | Tool | Description |
 |------|-------------|
 | `verify_xrp_payment` | Submit txHash for FDC attestation |
-| `get_attestation_status` | Check attestation by UUID |
-| `lookup_attestation_by_tx` | Find attestation by txHash |
-| `get_attestation_by_round` | List attestations by round ID |
+| `get_attestation_status` | Check attestation by UUID (public subset unless owning key) |
+| `lookup_attestation_by_tx` | Find attestation by txHash (public subset unless owning key) |
 | `get_server_info` | Server + network info |
 
 Connect via stdio: `npm run start:mcp`

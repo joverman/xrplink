@@ -32,8 +32,15 @@ interface StoreHealth {
   error?: string;
 }
 
+export const MAX_WEBHOOKS_PER_KEY = 10;
+
+export function sanitizeWebhookRecord(hook: Webhook): Webhook {
+  const scoped = Boolean(hook.attestationId) && Boolean(hook.apiKeyId);
+  return { ...hook, active: scoped && hook.active !== false };
+}
+
 interface Store {
-  createAttestation(txHash: string): Promise<Attestation>;
+  createAttestation(txHash: string, ownerKeyId?: string): Promise<Attestation>;
   getAttestation(id: string): Promise<Attestation | undefined>;
   getByTxHash(txHash: string): Promise<Attestation | undefined>;
   updateAttestation(id: string, updates: Partial<Attestation>): Promise<Attestation | undefined>;
@@ -47,7 +54,8 @@ interface Store {
   setApiKeyUsageCount(key: string, count: number): Promise<boolean>;
   /** Copy monthly attestation quota from an old key id onto a new one, then drop the old rows. */
   rekeyAttestationUsage(oldKey: string, newKey: string): Promise<void>;
-  registerWebhook(url: string, attestationId: string | null, secret?: string): Promise<Webhook>;
+  registerWebhook(url: string, attestationId: string, apiKeyId: string, secret?: string): Promise<Webhook>;
+  countWebhooksForApiKey(apiKeyId: string): Promise<number>;
   getWebhooksForAttestation(attestationId: string): Promise<Webhook[]>;
   getWebhook(id: string): Promise<Webhook | undefined>;
   removeWebhook(id: string): Promise<boolean>;
@@ -134,7 +142,11 @@ class JsonFileStore implements Store {
         txHashIndex[a.txHash.toLowerCase()] = id;
       }
       const apiKeys = migrateJsonApiKeys((this.readJson(API_KEYS_PATH) || {}) as Record<string, ApiKey>);
-      const webhooks = (this.readJson(WEBHOOKS_PATH) || {}) as Record<string, Webhook>;
+      const rawWebhooks = (this.readJson(WEBHOOKS_PATH) || {}) as Record<string, Webhook>;
+      const webhooks: Record<string, Webhook> = {};
+      for (const [id, hook] of Object.entries(rawWebhooks)) {
+        webhooks[id] = sanitizeWebhookRecord(hook);
+      }
       const attestationUsage = migrateJsonAttestationUsage(
         (this.readJson(ATTESTATION_USAGE_PATH) || {}) as Record<string, number>
       );
@@ -173,7 +185,7 @@ class JsonFileStore implements Store {
     };
   }
 
-  async createAttestation(txHash: string): Promise<Attestation> {
+  async createAttestation(txHash: string, ownerKeyId?: string): Promise<Attestation> {
     const existing = this.data.txHashIndex[txHash.toLowerCase()];
     if (existing) return this.data.attestations[existing];
 
@@ -183,6 +195,7 @@ class JsonFileStore implements Store {
       id, txHash, status: "pending", roundId: null,
       abiEncodedRequest: null, proof: null, verifiedTxHash: null, error: null,
       createdAt: now, updatedAt: now,
+      ownerKeyId: ownerKeyId || null,
     };
     this.data.attestations[id] = record;
     this.data.txHashIndex[txHash.toLowerCase()] = id;
@@ -299,17 +312,32 @@ class JsonFileStore implements Store {
     this.syncPersist();
   }
 
-  async registerWebhook(url: string, attestationId: string | null, secret?: string): Promise<Webhook> {
+  async registerWebhook(url: string, attestationId: string, apiKeyId: string, secret?: string): Promise<Webhook> {
     const id = uuid();
-    const hook: Webhook = { id, url, attestationId, secret, createdAt: new Date().toISOString() };
+    const hook: Webhook = {
+      id,
+      url,
+      attestationId,
+      apiKeyId: apiKeyLookupId(apiKeyId),
+      secret,
+      createdAt: new Date().toISOString(),
+      active: true,
+    };
     this.data.webhooks[id] = hook;
     this.syncPersist();
     return hook;
   }
 
+  async countWebhooksForApiKey(apiKeyId: string): Promise<number> {
+    const hashed = apiKeyLookupId(apiKeyId);
+    return Object.values(this.data.webhooks).filter(
+      (h) => h.active !== false && h.apiKeyId && apiKeyLookupId(h.apiKeyId) === hashed
+    ).length;
+  }
+
   async getWebhooksForAttestation(attestationId: string): Promise<Webhook[]> {
     return Object.values(this.data.webhooks).filter(
-      (h) => h.attestationId === null || h.attestationId === attestationId
+      (h) => h.active !== false && Boolean(h.apiKeyId) && h.attestationId === attestationId
     );
   }
 
@@ -383,6 +411,7 @@ class PostgresStore implements Store {
       CREATE INDEX IF NOT EXISTS idx_attestations_tx_hash ON attestations(tx_hash);
       CREATE INDEX IF NOT EXISTS idx_attestations_status ON attestations(status);
     `);
+    await this.pool.query(`ALTER TABLE attestations ADD COLUMN IF NOT EXISTS owner_key_id VARCHAR(100)`);
 
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS api_keys (
@@ -409,6 +438,11 @@ class PostgresStore implements Store {
       );
       CREATE INDEX IF NOT EXISTS idx_webhooks_attestation ON webhooks(attestation_id);
     `);
+    await this.pool.query(`ALTER TABLE webhooks ADD COLUMN IF NOT EXISTS api_key_id VARCHAR(100)`);
+    await this.pool.query(`ALTER TABLE webhooks ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true`);
+    await this.pool.query(
+      `UPDATE webhooks SET active = false WHERE attestation_id IS NULL OR api_key_id IS NULL`
+    );
 
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS attestation_usage (
@@ -480,17 +514,18 @@ class PostgresStore implements Store {
       error: row.error,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
+      ownerKeyId: row.owner_key_id || null,
     };
   }
 
-  async createAttestation(txHash: string): Promise<Attestation> {
+  async createAttestation(txHash: string, ownerKeyId?: string): Promise<Attestation> {
     const existing = await this.getByTxHash(txHash);
     if (existing) return existing;
 
     const id = uuid();
     const result = await this.pool.query(
-      `INSERT INTO attestations (id, tx_hash) VALUES ($1, $2) RETURNING *`,
-      [id, txHash]
+      `INSERT INTO attestations (id, tx_hash, owner_key_id) VALUES ($1, $2, $3) RETURNING *`,
+      [id, txHash, ownerKeyId || null]
     );
     return this.rowToAttestation(result.rows[0]);
   }
@@ -612,47 +647,47 @@ class PostgresStore implements Store {
     );
   }
 
-  async registerWebhook(url: string, attestationId: string | null, secret?: string): Promise<Webhook> {
-    const id = uuid();
-    const result = await this.pool.query(
-      `INSERT INTO webhooks (id, url, attestation_id, secret) VALUES ($1, $2, $3, $4) RETURNING *`,
-      [id, url, attestationId, secret || null]
-    );
-    const row = result.rows[0];
+  private rowToWebhook(row: any): Webhook {
     return {
       id: row.id,
       url: row.url,
       attestationId: row.attestation_id,
+      apiKeyId: row.api_key_id || undefined,
       secret: row.secret,
-      createdAt: row.created_at.toISOString(),
+      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+      active: row.active !== false,
     };
+  }
+
+  async registerWebhook(url: string, attestationId: string, apiKeyId: string, secret?: string): Promise<Webhook> {
+    const id = uuid();
+    const result = await this.pool.query(
+      `INSERT INTO webhooks (id, url, attestation_id, api_key_id, secret, active) VALUES ($1, $2, $3, $4, $5, true) RETURNING *`,
+      [id, url, attestationId, apiKeyLookupId(apiKeyId), secret || null]
+    );
+    return this.rowToWebhook(result.rows[0]);
+  }
+
+  async countWebhooksForApiKey(apiKeyId: string): Promise<number> {
+    const result = await this.pool.query(
+      `SELECT COUNT(*)::int AS n FROM webhooks WHERE active = true AND api_key_id = $1`,
+      [apiKeyLookupId(apiKeyId)]
+    );
+    return result.rows[0]?.n || 0;
   }
 
   async getWebhooksForAttestation(attestationId: string): Promise<Webhook[]> {
     const result = await this.pool.query(
-      `SELECT * FROM webhooks WHERE attestation_id IS NULL OR attestation_id = $1`,
+      `SELECT * FROM webhooks WHERE active = true AND api_key_id IS NOT NULL AND attestation_id = $1`,
       [attestationId]
     );
-    return result.rows.map((row: any) => ({
-      id: row.id,
-      url: row.url,
-      attestationId: row.attestation_id,
-      secret: row.secret,
-      createdAt: row.created_at.toISOString(),
-    }));
+    return result.rows.map((row: any) => this.rowToWebhook(row));
   }
 
   async getWebhook(id: string): Promise<Webhook | undefined> {
     const result = await this.pool.query(`SELECT * FROM webhooks WHERE id = $1`, [id]);
     if (!result.rows[0]) return undefined;
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      url: row.url,
-      attestationId: row.attestation_id,
-      secret: row.secret,
-      createdAt: row.created_at.toISOString(),
-    };
+    return this.rowToWebhook(result.rows[0]);
   }
 
   async removeWebhook(id: string): Promise<boolean> {

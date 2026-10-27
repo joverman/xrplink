@@ -26,23 +26,15 @@ import {
   tools,
   handleGetAttestationStatus,
   handleLookupByTx,
-  handleGetAttestationByRound,
   handleGetServerInfo,
 } from "./tools.js";
 import { getResources, readResource } from "./resources.js";
 import { getPromptDefs, getPromptContent } from "./prompts.js";
 import { attestXrpPayment } from "../attest.js";
+import { getMcpContext, runMcpContext, McpRequestContext } from "./context.js";
 
 const SERVER_NAME = "xrplink-mcp";
 const SERVER_VERSION = "0.3.0";
-
-interface McpRequestContext {
-  apiKey?: string;
-  apiKeyRecord?: Awaited<ReturnType<typeof store.getApiKey>>;
-  paymentSignature?: string;
-}
-
-let requestContext: McpRequestContext = {};
 
 function toolError(text: string) {
   return { isError: true, content: [{ type: "text" as const, text }] };
@@ -54,6 +46,7 @@ function toolOk(payload: unknown) {
 }
 
 async function handleVerifyXrpPaymentWithAuth(args: Record<string, unknown>) {
+  const requestContext = getMcpContext();
   const result = await attestXrpPayment({
     txHash: args.txHash as string,
     apiKeyHeader: requestContext.apiKey,
@@ -116,7 +109,6 @@ const toolHandlers: Record<string, (args: Record<string, unknown>) => Promise<an
   verify_xrp_payment: handleVerifyXrpPaymentWithAuth,
   get_attestation_status: handleGetAttestationStatus,
   lookup_attestation_by_tx: handleLookupByTx,
-  get_attestation_by_round: handleGetAttestationByRound,
   get_server_info: handleGetServerInfo,
 };
 
@@ -177,53 +169,55 @@ export async function handleMcpRequest(req: Request, res: Response) {
   const apiKeyHeader = req.headers["x-api-key"] as string | undefined;
   const paymentSignature = req.headers["payment-signature"] as string | undefined;
 
-  requestContext = { apiKey: apiKeyHeader, paymentSignature };
+  const ctx: McpRequestContext = { http: true, apiKey: apiKeyHeader, paymentSignature };
   if (apiKeyHeader) {
     const apiKeyRecord = await store.getApiKey(apiKeyHeader);
     if (apiKeyRecord && apiKeyRecord.active) {
-      requestContext.apiKeyRecord = apiKeyRecord;
+      ctx.apiKeyRecord = apiKeyRecord;
       store.incrementApiKeyUsage(apiKeyHeader);
     }
   }
 
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  let transport: StreamableHTTPServerTransport;
+  await runMcpContext(ctx, async () => {
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    let transport: StreamableHTTPServerTransport;
 
-  if (sessionId && transports.has(sessionId)) {
-    transport = transports.get(sessionId)!;
-  } else if (req.method === "POST" && !sessionId) {
-    transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => crypto.randomUUID(),
-    });
-    const server = createMcpServer();
-    await server.connect(transport);
-  } else if (req.method === "DELETE" && sessionId) {
-    const existingTransport = transports.get(sessionId);
-    if (existingTransport) {
-      await existingTransport.close();
-      transports.delete(sessionId);
+    if (sessionId && transports.has(sessionId)) {
+      transport = transports.get(sessionId)!;
+    } else if (req.method === "POST" && !sessionId) {
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+      });
+      const server = createMcpServer();
+      await server.connect(transport);
+    } else if (req.method === "DELETE" && sessionId) {
+      const existingTransport = transports.get(sessionId);
+      if (existingTransport) {
+        await existingTransport.close();
+        transports.delete(sessionId);
+      }
+      res.status(200).json({ status: "session closed" });
+      return;
+    } else if (req.method === "GET") {
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+      });
+      const server = createMcpServer();
+      await server.connect(transport);
+    } else {
+      res.status(400).json({ error: "Bad Request", message: "Missing or invalid session ID" });
+      return;
     }
-    res.status(200).json({ status: "session closed" });
-    return;
-  } else if (req.method === "GET") {
-    transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-    const server = createMcpServer();
-    await server.connect(transport);
-  } else {
-    res.status(400).json({ error: "Bad Request", message: "Missing or invalid session ID" });
-    return;
-  }
 
-  const nodeReq = req as unknown as IncomingMessage & { auth?: any };
-  const nodeRes = res as unknown as ServerResponse;
-  await transport.handleRequest(nodeReq, nodeRes, req.body);
+    const nodeReq = req as unknown as IncomingMessage & { auth?: any };
+    const nodeRes = res as unknown as ServerResponse;
+    await transport.handleRequest(nodeReq, nodeRes, req.body);
 
-  const newSessionId = transport.sessionId;
-  if (newSessionId && !transports.has(newSessionId)) {
-    transports.set(newSessionId, transport);
-  }
+    const newSessionId = transport.sessionId;
+    if (newSessionId && !transports.has(newSessionId)) {
+      transports.set(newSessionId, transport);
+    }
+  });
 }
 
 export function getMcpSessionCount(): number {
