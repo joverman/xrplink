@@ -20,6 +20,8 @@ services:
       - HOST=0.0.0.0
       - NODE_ENV=production
       - FLARE_NETWORK=flare
+      # Staging: set NODE_ENV=staging and FLARE_NETWORK=coston2. NODE_ENV=production
+      # refuses to boot unless FLARE_NETWORK=flare.
       - DATA_DIR=/app/data
       # TRUST_PROXY: defaults to loopback,linklocal,uniquelocal (safe)
       # Only set to "true" if cloudflared is in a trusted Docker network

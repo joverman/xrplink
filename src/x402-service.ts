@@ -9,9 +9,10 @@
  */
 
 import crypto from "crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { existsSync, readFileSync, unlinkSync } from "fs";
+import { join } from "path";
 import { getAttestationPrice, isPriceFeedAvailable, readNumber, AttestationPrice } from "./price-service.js";
+import { atomicWriteFileSync, createMutex } from "./file-lock.js";
 import { recordX402Settlement } from "./x402-ledger.js";
 import { lookupXrplTx, TF_PARTIAL_PAYMENT, XrplIssuedAmount, XrplTxResult } from "./xrpl-tx.js";
 
@@ -111,24 +112,9 @@ function statePath(): string {
   return join(process.env.DATA_DIR || "data", "x402-state.json");
 }
 
-function atomicWriteFileSync(path: string, data: string): void {
-  const dir = dirname(path);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tempPath = join(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
-  try {
-    writeFileSync(tempPath, data);
-    renameSync(tempPath, path);
-  } catch (err) {
-    try {
-      unlinkSync(tempPath);
-    } catch {
-      /* ignore */
-    }
-    throw err;
-  }
-}
+const stateLock = createMutex();
 
-function persistState(): void {
+function persistUnlocked(): void {
   pruneQuotes();
   const file: PersistFile = {
     quotes: Object.fromEntries(quotes),
@@ -136,6 +122,10 @@ function persistState(): void {
     usedPayloadHashes: [...usedPayloadHashes],
   };
   atomicWriteFileSync(statePath(), JSON.stringify(file));
+}
+
+function persistState(): Promise<void> {
+  return stateLock(() => persistUnlocked());
 }
 
 function loadState(): void {
@@ -323,16 +313,18 @@ export async function buildPaymentRequired(txHash: string): Promise<{
     price,
     createdAt: Date.now(),
   };
-  ensureStateLoaded();
-  quotes.set(invoiceId, quote);
-  payments.set(invoiceId, {
-    invoiceId,
-    txHash,
-    status: "quoted",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+  await stateLock(() => {
+    ensureStateLoaded();
+    quotes.set(invoiceId, quote);
+    payments.set(invoiceId, {
+      invoiceId,
+      txHash,
+      status: "quoted",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    persistUnlocked();
   });
-  persistState();
 
   return { paymentRequired, quote, price };
 }
@@ -376,22 +368,26 @@ export function getPaymentRecord(invoiceId: string): PaymentRecord | undefined {
   return payments.get(invoiceId);
 }
 
-export function markPaymentFdcOk(invoiceId: string): void {
-  ensureStateLoaded();
-  const rec = payments.get(invoiceId);
-  if (!rec) return;
-  rec.status = "fdc_ok";
-  rec.updatedAt = Date.now();
-  persistState();
+export async function markPaymentFdcOk(invoiceId: string): Promise<void> {
+  await stateLock(() => {
+    ensureStateLoaded();
+    const rec = payments.get(invoiceId);
+    if (!rec) return;
+    rec.status = "fdc_ok";
+    rec.updatedAt = Date.now();
+    persistUnlocked();
+  });
 }
 
-export function markPaymentFdcFailed(invoiceId: string): void {
-  ensureStateLoaded();
-  const rec = payments.get(invoiceId);
-  if (!rec) return;
-  rec.status = "fdc_failed";
-  rec.updatedAt = Date.now();
-  persistState();
+export async function markPaymentFdcFailed(invoiceId: string): Promise<void> {
+  await stateLock(() => {
+    ensureStateLoaded();
+    const rec = payments.get(invoiceId);
+    if (!rec) return;
+    rec.status = "fdc_failed";
+    rec.updatedAt = Date.now();
+    persistUnlocked();
+  });
 }
 
 function matchAccept(payload: any, accepts: X402PaymentRequirements[]): X402PaymentRequirements | null {
@@ -677,22 +673,24 @@ async function processX402PaymentLocked(
     return { outcome: "failed", error: ledgerError };
   }
 
-  usedPayloadHashes.add(fp);
-  payments.set(invoiceId, {
-    invoiceId,
-    txHash: expectedTxHash,
-    status: "settled",
-    settlementTx: settlement.transaction,
-    payer: settlement.payer,
-    asset: requirements.asset,
-    amount: requirements.amount,
-    issuer: requirements.extra.issuer,
-    createdAt: rec?.createdAt || Date.now(),
-    updatedAt: Date.now(),
+  await stateLock(() => {
+    usedPayloadHashes.add(fp);
+    payments.set(invoiceId, {
+      invoiceId,
+      txHash: expectedTxHash,
+      status: "settled",
+      settlementTx: settlement.transaction,
+      payer: settlement.payer,
+      asset: requirements.asset,
+      amount: requirements.amount,
+      issuer: requirements.extra.issuer,
+      createdAt: rec?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    });
+    persistUnlocked();
   });
-  persistState();
 
-  recordX402Settlement({
+  await recordX402Settlement({
     invoiceId,
     time: new Date().toISOString(),
     asset: requirements.asset === RLUSD_HEX ? "RLUSD" : requirements.asset,

@@ -1,12 +1,12 @@
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { config, activeNetwork } from "../config.js";
 import { store } from "../store.js";
-import * as fdc from "../fdc-service.js";
-import { FdcVerifierError } from "../fdc-service.js";
 import { whiteLabel } from "../white-label.js";
-import { formatError } from "./errors.js";
-import { preflightXrplPayment, FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "../xrpl-tx.js";
+import { attestXrpPayment } from "../attest.js";
+import { FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "../xrpl-tx.js";
 import { attestationViewForMcp } from "../attestation-view.js";
+import { getMcpContext } from "./context.js";
+import { checkVerifyRateLimit } from "../rate-limit.js";
 
 export const tools: Tool[] = [
   {
@@ -55,68 +55,76 @@ export const tools: Tool[] = [
   },
 ];
 
+function toolError(text: string) {
+  return { isError: true, content: [{ type: "text" as const, text }] };
+}
+
+function toolOk(payload: unknown) {
+  const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  return { content: [{ type: "text" as const, text }] };
+}
+
+/**
+ * Quota/x402-aware verify. Requires an API key in MCP context (HTTP header or
+ * stdio MCP_API_KEY). Unauthenticated stdio no longer spends the Flare wallet.
+ */
 export async function handleVerifyXrpPayment(args: Record<string, unknown>) {
-  const txHash = args.txHash as string;
-  const cleanHash = txHash.replace(/^0x/i, "").toUpperCase();
+  const requestContext = getMcpContext();
+  const apiKey = requestContext.apiKey || (typeof args.apiKey === "string" ? args.apiKey : undefined);
+  if (requestContext.http || requestContext.clientIp) {
+    const limited = checkVerifyRateLimit(requestContext.clientIp || "unknown", apiKey);
+    if (!limited.allowed) {
+      return toolError(`Rate limit exceeded. Retry after ${limited.retryAfterSec}s.`);
+    }
+  }
+  const result = await attestXrpPayment({
+    txHash: args.txHash as string,
+    apiKeyHeader: apiKey,
+    apiKeyRecord: requestContext.apiKeyRecord,
+    paymentSignature: requestContext.paymentSignature,
+  });
 
-  if (!/^[0-9A-F]{64}$/.test(cleanHash)) {
-    const err = formatError("INVALID_TX_HASH");
-    return { isError: true, content: [{ type: "text" as const, text: `${err.message}\n\n${err.suggestedAction}` }] };
+  if (result.kind === "ok") {
+    const extra =
+      result.body.status === "pending"
+        ? { message: `Submitted to voting round ${result.body.roundId}. Use get_attestation_status in ~90 seconds to check.` }
+        : {};
+    return toolOk({ ...result.body, ...extra });
   }
 
-  const cached = await store.getByTxHash(cleanHash);
-  if (cached) {
-    return {
-      content: [{ type: "text" as const, text: `Attestation already ${cached.status}\n\n${JSON.stringify({ id: cached.id, txHash: cleanHash, roundId: cached.roundId, status: cached.status, verifiedTxHash: cached.verifiedTxHash, cached: true }, null, 2)}` }],
-    };
+  if (result.kind === "payment_required") {
+    return toolError(
+      [
+        result.body.message,
+        "",
+        "This is an x402 Payment Required challenge. Sign an XRPL Payment for one of the accepts entries and retry with a PAYMENT-SIGNATURE header.",
+        "",
+        JSON.stringify(
+          {
+            code: result.body.code,
+            paymentRequired: result.body.paymentRequired,
+            priceUsd: result.body.priceUsd,
+            priceXrp: result.body.priceXrp,
+            priceRlusd: result.body.priceRlusd,
+            limit: result.body.limit,
+            used: result.body.used,
+            resetDate: result.body.resetDate,
+            upgradeUrl: result.body.upgradeUrl,
+          },
+          null,
+          2
+        ),
+      ].join("\n")
+    );
   }
 
-  if (config.paymentVerifierAddress) {
-    try {
-      if (await fdc.isAlreadyVerified(cleanHash)) {
-        const record = await store.createAttestation(cleanHash);
-        await store.updateAttestation(record.id, { status: "verified" });
-        return { content: [{ type: "text" as const, text: `Transaction already verified on-chain\n\n${JSON.stringify({ id: record.id, txHash: cleanHash, status: "verified" }, null, 2)}` }] };
-      }
-    } catch {}
-  }
-
-  const preflight = await preflightXrplPayment(cleanHash);
-  if (!preflight.ok) {
-    const ctx: Record<string, string> = {};
-    if (preflight.ageDays != null) ctx.ageDays = String(preflight.ageDays);
-    if (preflight.windowDays != null) ctx.windowDays = String(preflight.windowDays);
-    if (preflight.closedAt) ctx.closedAt = preflight.closedAt;
-    if (preflight.transactionType) ctx.transactionType = preflight.transactionType;
-    const err = formatError(preflight.code, Object.keys(ctx).length ? ctx : undefined);
-    return { isError: true, content: [{ type: "text" as const, text: `${err.message}\n\n${err.suggestedAction || ""}` }] };
-  }
-
-  const attestation = await store.createAttestation(cleanHash);
-  try {
-    const proofOwner = fdc.getProofOwner();
-    const abiEncoded = await fdc.prepareRequest(cleanHash, proofOwner);
-    await store.updateAttestation(attestation.id, { abiEncodedRequest: abiEncoded });
-    const { roundId } = await fdc.submitRequest(abiEncoded);
-    await store.updateAttestation(attestation.id, { roundId, status: "pending" });
-
-    pollForProof(attestation.id, roundId, abiEncoded).catch((err) => {
-      console.error(`MCP poll failed for ${attestation.id}:`, err.message);
-    });
-
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({
-        id: attestation.id, txHash: cleanHash, roundId, status: "pending",
-        message: `Submitted to voting round ${roundId}. Use get_attestation_status in ~90 seconds to check.`,
-      }, null, 2) }],
-    };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    await store.updateAttestation(attestation.id, { status: "failed", error: message });
-    const code = err instanceof FdcVerifierError || message.startsWith("Verifier ") ? "VERIFIER_ERROR" : "SUBMIT_FAILED";
-    const formatted = formatError(code, { message });
-    return { isError: true, content: [{ type: "text" as const, text: `${formatted.message}\n\n${message}\n\n${formatted.suggestedAction || ""}` }] };
-  }
+  const rawMessage = String(result.body.message || result.body.error || "Request failed");
+  const code = result.body.code || result.body.error;
+  const message =
+    code === "MISSING_API_KEY" || code === "INVALID_API_KEY"
+      ? `API key required. ${rawMessage}`
+      : rawMessage;
+  return toolError(code ? `${message}\n\nCode: ${code}` : message);
 }
 
 export async function handleGetAttestationStatus(args: Record<string, unknown>) {
@@ -135,7 +143,6 @@ export async function handleLookupByTx(args: Record<string, unknown>) {
 
 export async function handleGetServerInfo() {
   const wl = whiteLabel.get();
-  const attestations = await store.listAttestations();
   return {
     content: [{ type: "text" as const, text: JSON.stringify({
       brand: wl.brandName,
@@ -149,28 +156,6 @@ export async function handleGetServerInfo() {
       xrpPaymentLookbackDays: FDC_XRP_PAYMENT_LUT_LIMIT_DAYS,
       companyUrl: wl.companyUrl,
       uptime: process.uptime(),
-      attestationCount: attestations.length,
     }, null, 2) }],
   };
-}
-
-async function pollForProof(id: string, roundId: number, abiEncoded: string, attempt = 1) {
-  await new Promise((r) => setTimeout(r, config.pollIntervalMs));
-  try {
-    const proofData = await fdc.fetchProof(roundId, abiEncoded);
-    if (!proofData) {
-      if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-      await store.updateAttestation(id, { status: "not_found", error: "Proof not found after max poll attempts" });
-      return;
-    }
-    await store.updateAttestation(id, { proof: proofData, status: "ready" });
-    if (config.paymentVerifierAddress) {
-      const verifiedTxHash = await fdc.verifyProofOnChain(proofData, config.paymentVerifierAddress);
-      await store.updateAttestation(id, { verifiedTxHash, status: "verified" });
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (attempt < config.maxPollAttempts) return pollForProof(id, roundId, abiEncoded, attempt + 1);
-    await store.updateAttestation(id, { status: "failed", error: message });
-  }
 }

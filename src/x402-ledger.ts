@@ -3,8 +3,9 @@
  * Used for operational logs and the daily margin summary. No customer names.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { existsSync, readFileSync, unlinkSync } from "fs";
+import { join } from "path";
+import { atomicWriteJson, createMutex } from "./file-lock.js";
 
 export interface X402LedgerAsset {
   asset: string;
@@ -51,28 +52,11 @@ interface LedgerFile {
   events: X402LedgerEvent[];
 }
 
+const ledgerLock = createMutex();
+
 function ledgerPath(): string {
   const dir = process.env.DATA_DIR || "data";
   return join(dir, "x402-ledger.json");
-}
-
-function atomicWriteFileSync(path: string, data: string): void {
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const tempPath = join(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
-  try {
-    writeFileSync(tempPath, data);
-    renameSync(tempPath, path);
-  } catch (err) {
-    try {
-      unlinkSync(tempPath);
-    } catch {
-      /* ignore */
-    }
-    throw err;
-  }
 }
 
 function load(): LedgerFile {
@@ -87,14 +71,16 @@ function load(): LedgerFile {
 }
 
 function save(file: LedgerFile): void {
-  atomicWriteFileSync(ledgerPath(), JSON.stringify(file, null, 2));
+  atomicWriteJson(ledgerPath(), file);
 }
 
-export function recordX402Quote(event: Omit<X402QuoteEvent, "type">): X402QuoteEvent {
+export async function recordX402Quote(event: Omit<X402QuoteEvent, "type">): Promise<X402QuoteEvent> {
   const full: X402QuoteEvent = { type: "quote", ...event };
-  const file = load();
-  file.events.push(full);
-  save(file);
+  await ledgerLock(() => {
+    const file = load();
+    file.events.push(full);
+    save(file);
+  });
   const assets = full.assets.map((a) => `${a.asset}:${a.amount}`).join(",");
   console.log(
     `x402 quote invoiceId=${full.invoiceId} time=${full.time} usd=${full.usd} flrUsd=${full.flrUsd} feeFlr=${full.feeFlr} assets=${assets}`
@@ -102,11 +88,13 @@ export function recordX402Quote(event: Omit<X402QuoteEvent, "type">): X402QuoteE
   return full;
 }
 
-export function recordX402Settlement(event: Omit<X402SettledEvent, "type">): X402SettledEvent {
+export async function recordX402Settlement(event: Omit<X402SettledEvent, "type">): Promise<X402SettledEvent> {
   const full: X402SettledEvent = { type: "settled", ...event };
-  const file = load();
-  file.events.push(full);
-  save(file);
+  await ledgerLock(() => {
+    const file = load();
+    file.events.push(full);
+    save(file);
+  });
   console.log(
     `x402 settled invoiceId=${full.invoiceId} time=${full.time} asset=${full.asset} amount=${full.amount} usd=${full.usd} flrUsd=${full.flrUsd} feeFlr=${full.feeFlr}`
   );
