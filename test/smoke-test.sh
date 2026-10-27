@@ -56,7 +56,7 @@ fi
 echo "Health response: $HEALTH_RESPONSE"
 
 # Verify the response contains expected fields
-if echo "$HEALTH_RESPONSE" | grep -q '"status":"ok"'; then
+if echo "$HEALTH_RESPONSE" | grep -q '"status":"online"'; then
     echo "✅ SMOKE TEST PASSED: App boots and /health responds"
     exit 0
 else

@@ -4,6 +4,7 @@ import { store } from "../store.js";
 import * as fdc from "../fdc-service.js";
 import { whiteLabel } from "../white-label.js";
 import { formatError } from "./errors.js";
+import { getPublicStatus } from "../status.js";
 
 export const tools: Tool[] = [
   {
@@ -47,7 +48,7 @@ export const tools: Tool[] = [
   },
   {
     name: "get_server_info",
-    description: "Get XRPLink server information, network details, contract addresses, and white-label branding.",
+    description: "Get public XRPLink status, network, chain id, brand, and contract addresses. Does not include wallet balance, counts, or uptime. Operational metrics require a pro key at GET /api/v1/admin/status.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -136,20 +137,15 @@ export async function handleGetAttestationByRound(args: Record<string, unknown>)
 }
 
 export async function handleGetServerInfo() {
+  const publicStatus = await getPublicStatus();
   const wl = whiteLabel.get();
-  const attestations = await store.listAttestations();
   return {
     content: [{ type: "text" as const, text: JSON.stringify({
-      brand: wl.brandName,
-      network: config.network,
+      ...publicStatus,
       sourceId: activeNetwork.sourceId,
-      rpc: activeNetwork.rpc,
       paymentVerifier: config.paymentVerifierAddress || "not configured",
-      chainId: activeNetwork.chainId,
       fdcHub: activeNetwork.fdcHub,
       companyUrl: wl.companyUrl,
-      uptime: process.uptime(),
-      attestationCount: attestations.length,
     }, null, 2) }],
   };
 }

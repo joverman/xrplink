@@ -13,6 +13,7 @@ import {
 } from "./types.js";
 import { attestXrpPayment } from "./attest.js";
 import { ATTESTATION_LIMITS } from "./attestation-quota.js";
+import { getAdminStatus, getPublicStatus } from "./status.js";
 
 const router = Router();
 
@@ -523,23 +524,8 @@ router.post("/contact", async (req: Request, res: Response) => {
 // --- Public endpoints ---
 
 router.get("/health", async (_req: Request, res: Response) => {
-  const wl = whiteLabel.get();
-  const { getStoreHealth } = await import("./store.js");
-  const storeHealth = getStoreHealth();
-  
-  const isHealthy = storeHealth.ok;
-  res.status(isHealthy ? 200 : 503).json({
-    status: isHealthy ? "ok" : "degraded",
-    brand: wl.brandName,
-    companyUrl: wl.companyUrl,
-    network: config.network,
-    paymentVerifier: config.paymentVerifierAddress || "not configured",
-    sourceId: activeNetwork.sourceId,
-    chainId: activeNetwork.chainId,
-    fdcHub: activeNetwork.fdcHub,
-    uptime: process.uptime(),
-    storage: storeHealth,
-  });
+  const publicStatus = await getPublicStatus();
+  res.status(publicStatus.status === "online" ? 200 : 503).json(publicStatus);
 });
 
 // --- Agent Discovery Files ---
@@ -576,7 +562,10 @@ ${baseUrl}
 
 ### Public
 - GET /receipt/:txHash - View receipt (HTML or JSON with Accept header)
-- GET /health - Server health check
+- GET /health - Public status only: online/degraded, network, chain id, brand, attestationsAvailable
+
+### Admin (pro API key)
+- GET /api/v1/admin/status - Wallet balance, counts, uptime, and storage
 
 ## MCP Server
 
@@ -721,8 +710,31 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
       "/health": {
         get: {
           tags: ["Public"],
-          summary: "Health check",
-          responses: { "200": { description: "Server is healthy" }, "503": { description: "Server is degraded" } },
+          summary: "Public health check",
+          description: "Returns only agent-safe fields: status (online/degraded), network, chainId, brand, and attestationsAvailable. Operational metrics are not included.",
+          responses: {
+            "200": {
+              description: "Server is online",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/PublicStatus" } } },
+            },
+            "503": {
+              description: "Server is degraded",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/PublicStatus" } } },
+            },
+          },
+        },
+      },
+      "/api/v1/admin/status": {
+        get: {
+          tags: ["Auth"],
+          summary: "Operational status (pro)",
+          description: "Wallet balance, attestation and API key counts, uptime, and storage. Requires a pro-tier API key.",
+          security: [{ ApiKeyAuth: [] }],
+          responses: {
+            "200": { description: "Operational status" },
+            "401": { description: "Missing API key" },
+            "403": { description: "Requires a pro-tier API key" },
+          },
         },
       },
       "/mcp": {
@@ -852,6 +864,16 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
             priceUsd: { type: "number" },
             priceXrp: { type: "number" },
             priceRlusd: { type: "string" },
+          },
+        },
+        PublicStatus: {
+          type: "object",
+          properties: {
+            status: { type: "string", enum: ["online", "degraded"] },
+            network: { type: "string" },
+            chainId: { type: "integer" },
+            brand: { type: "string" },
+            attestationsAvailable: { type: "boolean" },
           },
         },
       },
@@ -1666,6 +1688,13 @@ router.get("/api/v1/admin/keys", requireApiKey, async (req: Request, res: Respon
     return res.status(403).json(formatError("FORBIDDEN"));
   }
   return res.json(await store.listApiKeys());
+});
+
+router.get("/api/v1/admin/status", requireApiKey, async (req: Request, res: Response) => {
+  if ((req as any).apiKey.tier !== "pro") {
+    return res.status(403).json(formatError("FORBIDDEN"));
+  }
+  return res.json(await getAdminStatus());
 });
 
 router.get("/api/v1/admin/x402-margin", requireApiKey, async (req: Request, res: Response) => {
