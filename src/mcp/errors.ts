@@ -39,13 +39,13 @@ const catalog: Record<string, ErrorEntry> = {
   SUBMIT_FAILED: {
     message: "Failed to submit attestation request to FdcHub",
     suggestedAction:
-      "Check that your wallet has sufficient FLR balance for the attestation fee (1 FLR minimum). Verify the XRP transaction hash is valid and the transaction exists on the XRP Ledger.",
+      "Verify the XRP transaction hash is valid and the transaction exists on the XRP Ledger, then retry.",
     docsUrl: "xrplink://docs/network",
   },
   NOT_FOUND: {
     message: "The requested resource was not found",
     suggestedAction:
-      "Verify the ID or transaction hash is correct. Attestations are stored in the 'data/' directory and persist across restarts.",
+      "Verify the ID or transaction hash is correct.",
     docsUrl: "xrplink://docs/tools",
   },
   FORBIDDEN: {

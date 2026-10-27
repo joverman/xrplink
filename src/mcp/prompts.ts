@@ -85,7 +85,6 @@ export function getPromptContent(name: string, args?: Record<string, string>): s
         "- Configure brand name, colors, logo via GET/PUT /api/v1/admin/white-label",
         "",
         "## Network",
-        "- Set FLARE_NETWORK=coston2 or flare in .env",
         "- Mainnet uses XRP source ID; Coston2 uses testXRP",
       ].join("\n");
 

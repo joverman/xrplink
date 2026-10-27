@@ -90,7 +90,7 @@ jobs:
         run: |
           HEALTH=$(curl -sf http://localhost:3000/health)
           echo "Health response: $HEALTH"
-          if echo "$HEALTH" | grep -q '"status":"ok"'; then
+          if echo "$HEALTH" | grep -q '"status":"online"'; then
             echo "✅ Docker build and boot test passed"
           else
             echo "❌ Health check failed"
