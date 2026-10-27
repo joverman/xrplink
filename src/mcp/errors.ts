@@ -87,7 +87,12 @@ const catalog: Record<string, ErrorEntry> = {
   INVALID_URL: {
     message: "The provided URL is not valid",
     suggestedAction:
-      'Ensure the URL starts with http:// or https:// and is properly formatted. Example: https://example.com/hooks/xrp',
+      "Use an HTTPS URL on a public hostname. Private, loopback, link-local, decimal, and IPv4-mapped addresses are blocked. Example: https://example.com/hooks/xrp",
+    docsUrl: "xrplink://docs/tools",
+  },
+  WEBHOOK_LIMIT: {
+    message: "Too many webhooks for this API key",
+    suggestedAction: "Remove an existing webhook before registering another. Each key may register at most 10 active webhooks.",
     docsUrl: "xrplink://docs/tools",
   },
   INTERNAL_ERROR: {
@@ -97,9 +102,9 @@ const catalog: Record<string, ErrorEntry> = {
     docsUrl: "xrplink://docs/overview",
   },
   MISSING_ATTESTATION_ID: {
-    message: "attestationId not found",
+    message: "attestationId is required and must be an attestation this API key owns",
     suggestedAction:
-      "Verify the attestation ID is correct. Attestation IDs are UUIDs returned by the verify endpoint.",
+      "Pass the UUID returned by POST /api/v1/verify/xrp-payment for a payment this key attested. Global (all-attestation) webhooks are not supported.",
     docsUrl: "xrplink://docs/tools",
   },
   VERIFIER_ERROR: {

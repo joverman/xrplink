@@ -18,6 +18,8 @@ export interface Attestation {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  /** SHA-256 API key id that created this attestation (unset for legacy / x402-only). */
+  ownerKeyId?: string | null;
 }
 
 export interface ProofResponse {
@@ -66,9 +68,14 @@ export interface ApiKey {
 export interface Webhook {
   id: string;
   url: string;
+  /** Required for active hooks. Null/legacy global hooks are disabled on load. */
   attestationId: string | null;
+  /** SHA-256 API key id that registered the hook. */
+  apiKeyId?: string;
   secret?: string;
   createdAt: string;
+  /** False for migrated unscoped (null attestationId) hooks. */
+  active?: boolean;
 }
 
 export interface VerifyResponse {
@@ -90,7 +97,7 @@ export interface StatusResponse {
 
 export interface RegisterWebhookBody {
   url: string;
-  attestationId?: string;
+  attestationId: string;
 }
 
 export interface ApiError {

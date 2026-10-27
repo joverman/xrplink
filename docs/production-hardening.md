@@ -348,8 +348,9 @@ Outbound webhooks now include:
 
 - **HMAC signatures**: `X-Webhook-Signature: sha256=...` header
 - **Timestamps**: `X-Webhook-Timestamp` for replay protection
-- **HTTPS-only**: HTTP webhooks blocked in production
-- **SSRF protection**: Private IPs, metadata endpoints, and loopback addresses blocked
+- **HTTPS-only**: HTTP webhooks rejected
+- **Per-key, per-attestation**: the caller must own `attestationId`; global (`null`) hooks are disabled; max 10 active hooks per key
+- **SSRF protection**: DNS is resolved at register and delivery; private, loopback, link-local, IPv4-mapped, and decimal hosts are blocked; redirects are not followed
 - **Retries**: 3 attempts with exponential backoff (1s, 2s, 4s)
 
 ### Verifying Webhook Signatures
@@ -460,7 +461,7 @@ docker compose up -d
 fly secrets set PAYMENT_VERIFIER_ADDRESS_FLARE="0x..."
 ```
 
-Until set, attestations are fetched but not verified on-chain. The `/health` endpoint shows `paymentVerifier: "not configured"`.
+Until set, attestations are fetched but not verified on-chain. Public `/health` is liveness-only (`{"status":"ok"}`).
 
 ### Rollback Plan
 

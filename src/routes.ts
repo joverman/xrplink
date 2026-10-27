@@ -8,9 +8,8 @@ import { getUserFromToken, issueSessionToken } from "./auth.js";
 import { whiteLabel } from "./white-label.js";
 import { formatError } from "./mcp/errors.js";
 import { getPromptDefs, getPromptContent } from "./mcp/prompts.js";
-import { getResources, readResource } from "./mcp/resources.js";
+import { getResources } from "./mcp/resources.js";
 import {
-  StatusResponse,
   RegisterWebhookBody, Tier,
 } from "./types.js";
 import { attestXrpPayment } from "./attest.js";
@@ -19,6 +18,9 @@ import { ATTESTATION_LIMITS } from "./attestation-quota.js";
 import { hashApiKey, toPublicApiKey } from "./api-keys.js";
 import { rotateUserApiKey } from "./key-rotation.js";
 import { fetchXrplTx, RIPPLE_EPOCH, FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS, FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "./xrpl-tx.js";
+import { attestationViewForCaller, callerOwnsAttestation, NETWORK_STATUS_URI } from "./attestation-view.js";
+import { assertSafeWebhookUrl, UnsafeWebhookUrlError } from "./webhook-url.js";
+import { MAX_WEBHOOKS_PER_KEY } from "./store.js";
 
 const router = Router();
 
@@ -444,11 +446,11 @@ ${publicNavHtml()}
 <div class="endpoint"><span class="method get">GET</span><span class="path">/api/v1/status-by-tx/:txHash</span><span class="badge api-key" style="margin-left:0.5rem">API key</span><div class="desc">Find an attestation by the original XRP transaction hash.</div></div>
 
 <h3>Register a webhook</h3>
-<div class="endpoint"><span class="method post">POST</span><span class="path">/api/v1/webhooks</span><span class="badge api-key" style="margin-left:0.5rem">API key</span><div class="desc">Register a URL to receive attestation completion callbacks.</div></div>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/api/v1/webhooks</span><span class="badge api-key" style="margin-left:0.5rem">API key</span><div class="desc">Register an HTTPS URL for an attestation this API key owns. Global (null-attestation) hooks are not supported. Max 10 active hooks per key. Private, loopback, and non-HTTPS URLs are rejected.</div></div>
 <pre><code>curl -X POST https://xrp-link.com/api/v1/webhooks \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: sk_live_..." \\
-  -d '{"url":"https://your-app.com/hooks/xrp"}'</code></pre>
+  -d '{"url":"https://your-app.com/hooks/xrp","attestationId":"3f0c8e2a-..."}'</code></pre>
 
 <h2 id="billing">Billing</h2>
 <div class="endpoint"><span class="method post">POST</span><span class="path">/billing/subscribe</span><span class="badge auth" style="margin-left:0.5rem">bearer token</span><div class="desc">Create a Stripe Checkout session for a plan. Returns a redirect URL.</div></div>
@@ -470,10 +472,9 @@ ${publicNavHtml()}
 <table>
 <tr><th>Tool</th><th>Auth</th><th>Description</th></tr>
 <tr><td><code>verify_xrp_payment</code></td><td><span class="badge api-key">API key or x402</span></td><td>Submit a txHash for attestation (subscription quota or one x402 payment)</td></tr>
-<tr><td><code>get_attestation_status</code></td><td><span class="badge pub">keyless</span></td><td>Check attestation by UUID</td></tr>
-<tr><td><code>lookup_attestation_by_tx</code></td><td><span class="badge pub">keyless</span></td><td>Find attestation by txHash</td></tr>
-<tr><td><code>get_attestation_by_round</code></td><td><span class="badge pub">keyless</span></td><td>List attestations by round ID</td></tr>
-<tr><td><code>get_server_info</code></td><td><span class="badge pub">keyless</span></td><td>Server, network, and contract info</td></tr>
+<tr><td><code>get_attestation_status</code></td><td><span class="badge pub">keyless public subset</span></td><td>Check attestation by UUID (full proof only for the owning key)</td></tr>
+<tr><td><code>lookup_attestation_by_tx</code></td><td><span class="badge pub">keyless public subset</span></td><td>Find attestation by txHash (full proof only for the owning key)</td></tr>
+<tr><td><code>get_server_info</code></td><td><span class="badge pub">keyless</span></td><td>Server, network, and contract info (no wallet balance)</td></tr>
 </table>
 
 <pre><code># Initialize MCP session and list tools
@@ -631,25 +632,11 @@ router.post("/contact", async (req: Request, res: Response) => {
 // --- Public endpoints ---
 
 router.get("/health", async (_req: Request, res: Response) => {
-  const wl = whiteLabel.get();
   const { getStoreHealth } = await import("./store.js");
   const storeHealth = getStoreHealth();
-  
   const isHealthy = storeHealth.ok;
   res.status(isHealthy ? 200 : 503).json({
     status: isHealthy ? "ok" : "degraded",
-    brand: wl.brandName,
-    companyUrl: wl.companyUrl,
-    network: config.network,
-    paymentVerifier: config.paymentVerifierAddress || "not configured",
-    sourceId: activeNetwork.sourceId,
-    chainId: activeNetwork.chainId,
-    fdcHub: activeNetwork.fdcHub,
-    verifierBaseUrl: activeNetwork.verifierBaseUrl,
-    xrpPaymentLookbackSeconds: FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS,
-    xrpPaymentLookbackDays: FDC_XRP_PAYMENT_LUT_LIMIT_DAYS,
-    uptime: process.uptime(),
-    storage: storeHealth,
   });
 });
 
@@ -687,7 +674,7 @@ ${baseUrl}
 
 ### Public
 - GET /receipt/:txHash - View receipt (HTML or JSON with Accept header)
-- GET /health - Server health check
+- GET /health - Liveness (status ok only)
 
 ## MCP Server
 
@@ -697,10 +684,9 @@ Connect via Streamable HTTP transport (POST for requests, GET for SSE).
 
 ### Tools
 - verify_xrp_payment(txHash) - Create attestation (X-API-Key inside quota, or x402 PAYMENT-SIGNATURE). Unauthenticated calls return a tool error with payment requirements, never HTTP 403.
-- get_attestation_status(id) - Check status (keyless)
-- lookup_attestation_by_tx(txHash) - Find by txHash (keyless)
-- get_attestation_by_round(roundId) - List by FDC round (keyless)
-- get_server_info() - Server/network info (keyless)
+- get_attestation_status(id) - Check status (keyless public subset; owning key gets full proof)
+- lookup_attestation_by_tx(txHash) - Find by txHash (keyless public subset; owning key gets full proof)
+- get_server_info() - Server/network info (keyless; no wallet balance)
 
 ## Tiers & Limits (Mainnet)
 
@@ -993,7 +979,7 @@ router.get("/.well-known/mcp.json", (_req: Request, res: Response) => {
       header: "X-API-Key",
       payment_header: "PAYMENT-SIGNATURE",
       required_for: ["verify_xrp_payment"],
-      optional_for: ["get_attestation_status", "lookup_attestation_by_tx", "get_attestation_by_round", "get_server_info"],
+      optional_for: ["get_attestation_status", "lookup_attestation_by_tx", "get_server_info"],
       notes: "Discovery (initialize, tools/list) is unauthenticated. Unpaid verify_xrp_payment returns a tool error with x402 requirements, never HTTP 403.",
     },
   });
@@ -1780,13 +1766,8 @@ ${txData.DestinationTag ? `<div class="row"><span class="key">Destination Tag</s
 // --- MCP documentation resources served as JSON (for HTTP clients) ---
 
 router.get("/mcp/resources", async (_req: Request, res: Response) => {
-  const resources = getResources();
-  const result = [];
-  for (const r of resources) {
-    const text = await readResource(r.uri);
-    result.push({ uri: r.uri, name: r.name, description: r.description, content: text });
-  }
-  res.json(result);
+  const resources = getResources({ includePrivate: false }).filter((r) => r.uri !== NETWORK_STATUS_URI);
+  res.json(resources.map((r) => ({ uri: r.uri, name: r.name, description: r.description })));
 });
 
 router.get("/mcp/prompts", (_req: Request, res: Response) => {
@@ -1828,11 +1809,8 @@ router.get("/api/v1/status/:id", requireApiKey, async (req: Request, res: Respon
   if (!attestation) {
     return res.status(404).json(formatError("NOT_FOUND"));
   }
-  return res.json({
-    id: attestation.id, txHash: attestation.txHash, roundId: attestation.roundId,
-    status: attestation.status, proof: attestation.proof,
-    verifiedTxHash: attestation.verifiedTxHash, error: attestation.error,
-  } satisfies StatusResponse);
+  const presented = (req as any).apiKey?.key as string | undefined;
+  return res.json(attestationViewForCaller(attestation, presented));
 });
 
 router.get("/api/v1/status-by-tx/:txHash", requireApiKey, async (req: Request, res: Response) => {
@@ -1845,11 +1823,8 @@ router.get("/api/v1/status-by-tx/:txHash", requireApiKey, async (req: Request, r
   if (!attestation) {
     return res.status(404).json(formatError("NOT_FOUND"));
   }
-  return res.json({
-    id: attestation.id, txHash: attestation.txHash, roundId: attestation.roundId,
-    status: attestation.status, proof: attestation.proof,
-    verifiedTxHash: attestation.verifiedTxHash, error: attestation.error,
-  } satisfies StatusResponse);
+  const presented = (req as any).apiKey?.key as string | undefined;
+  return res.json(attestationViewForCaller(attestation, presented));
 });
 
 router.post("/api/v1/webhooks", requireApiKey, async (req: Request, res: Response) => {
@@ -1857,16 +1832,27 @@ router.post("/api/v1/webhooks", requireApiKey, async (req: Request, res: Respons
   if (!url || typeof url !== "string") {
     return res.status(400).json(formatError("MISSING_URL"));
   }
-  try {
-    const parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) throw new Error();
-  } catch {
-    return res.status(400).json(formatError("INVALID_URL"));
-  }
-  if (attestationId && !(await store.getAttestation(attestationId))) {
+  if (!attestationId || typeof attestationId !== "string") {
     return res.status(400).json(formatError("MISSING_ATTESTATION_ID"));
   }
-  const webhook = await store.registerWebhook(url, attestationId || null);
+  try {
+    await assertSafeWebhookUrl(url);
+  } catch (err) {
+    if (err instanceof UnsafeWebhookUrlError) {
+      return res.status(400).json(formatError("INVALID_URL", { message: err.message }));
+    }
+    return res.status(400).json(formatError("INVALID_URL"));
+  }
+  const attestation = await store.getAttestation(attestationId);
+  const apiKey = (req as any).apiKey;
+  if (!attestation || !callerOwnsAttestation(attestation, apiKey?.key)) {
+    return res.status(404).json(formatError("NOT_FOUND"));
+  }
+  const count = await store.countWebhooksForApiKey(apiKey.key);
+  if (count >= MAX_WEBHOOKS_PER_KEY) {
+    return res.status(400).json(formatError("WEBHOOK_LIMIT"));
+  }
+  const webhook = await store.registerWebhook(url, attestationId, apiKey.key);
   return res.status(201).json({ id: webhook.id, url: webhook.url, attestationId: webhook.attestationId });
 });
 

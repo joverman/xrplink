@@ -79,7 +79,7 @@ export function getPromptContent(name: string, args?: Record<string, string>): s
         "- Tiers: free (10/min), paid (100/min), pro (unlimited)",
         "",
         "## Webhooks",
-        "- Register URL to receive attestation completion events",
+        "- Register an HTTPS URL for an attestation this API key owns (POST /api/v1/webhooks). Global hooks are not supported.",
         "",
         "## White-Label Branding",
         "- Configure brand name, colors, logo via GET/PUT /api/v1/admin/white-label",

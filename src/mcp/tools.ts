@@ -6,6 +6,7 @@ import { FdcVerifierError } from "../fdc-service.js";
 import { whiteLabel } from "../white-label.js";
 import { formatError } from "./errors.js";
 import { preflightXrplPayment, FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "../xrpl-tx.js";
+import { attestationViewForMcp } from "../attestation-view.js";
 
 export const tools: Tool[] = [
   {
@@ -24,7 +25,7 @@ export const tools: Tool[] = [
   },
   {
     name: "get_attestation_status",
-    description: "Get the current status of an attestation by its UUID. Call this after verify_xrp_payment to check if the proof is ready and verified on-chain.",
+    description: "Get the current status of an attestation by its UUID. Unauthenticated callers receive the public receipt subset. The owning API key receives the full proof.",
     inputSchema: {
       type: "object",
       properties: {
@@ -35,7 +36,7 @@ export const tools: Tool[] = [
   },
   {
     name: "lookup_attestation_by_tx",
-    description: "Look up an attestation by its original XRP transaction hash. Returns the full attestation record if one exists.",
+    description: "Look up an attestation by its original XRP transaction hash. Unauthenticated callers receive the public receipt subset. The owning API key receives the full proof.",
     inputSchema: {
       type: "object",
       properties: {
@@ -51,17 +52,6 @@ export const tools: Tool[] = [
     name: "get_server_info",
     description: "Get XRPLink server information, network details, contract addresses, and white-label branding.",
     inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "get_attestation_by_round",
-    description: "List all attestations for a given FDC voting round ID.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        roundId: { type: "number", description: "FDC voting round ID to query" },
-      },
-      required: ["roundId"],
-    },
   },
 ];
 
@@ -133,21 +123,14 @@ export async function handleGetAttestationStatus(args: Record<string, unknown>) 
   const id = args.id as string;
   const a = await store.getAttestation(id);
   if (!a) return { isError: true, content: [{ type: "text" as const, text: `Attestation not found: ${id}` }] };
-  return { content: [{ type: "text" as const, text: JSON.stringify(a, null, 2) }] };
+  return { content: [{ type: "text" as const, text: JSON.stringify(attestationViewForMcp(a), null, 2) }] };
 }
 
 export async function handleLookupByTx(args: Record<string, unknown>) {
   const txHash = (args.txHash as string).replace(/^0x/i, "").toUpperCase();
   const a = await store.getByTxHash(txHash);
   if (!a) return { isError: true, content: [{ type: "text" as const, text: `No attestation found for txHash: ${txHash}` }] };
-  return { content: [{ type: "text" as const, text: JSON.stringify(a, null, 2) }] };
-}
-
-export async function handleGetAttestationByRound(args: Record<string, unknown>) {
-  const roundId = Number(args.roundId);
-  const all = await store.listAttestations();
-  const filtered = all.filter((a) => a.roundId === roundId);
-  return { content: [{ type: "text" as const, text: filtered.length ? JSON.stringify(filtered, null, 2) : `No attestations found for round ${roundId}` }] };
+  return { content: [{ type: "text" as const, text: JSON.stringify(attestationViewForMcp(a), null, 2) }] };
 }
 
 export async function handleGetServerInfo() {

@@ -2,6 +2,8 @@ import { config, activeNetwork } from "../config.js";
 import { store } from "../store.js";
 import { whiteLabel } from "../white-label.js";
 import { FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS, FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "../xrpl-tx.js";
+import { NETWORK_STATUS_URI } from "../attestation-view.js";
+import { getMcpContext } from "./context.js";
 
 interface ResourceTemplate {
   uri: string;
@@ -40,7 +42,7 @@ const templates: ResourceTemplate[] = [
       `# XRPLink MCP Tools\n\n## verify_xrp_payment\nSubmit an XRP transaction hash for FDC attestation.\n\`\`\`\nInput:  { "txHash": "388076B7245A60A13D6A764C8D0B5919F8A77E04E720C32CA1E30E9B7A291F22" }\nOutput: { "id": "uuid", "txHash": "...", "roundId": 1234, "status": "pending" }\n\`\`\`\nWait ~90s then call get_attestation_status.\n\n## get_attestation_status\nCheck attestation status by UUID.\n\n## lookup_attestation_by_tx\nFind attestation by XRP txHash.\n\n## get_server_info\nGet server, network, and branding info.\n\n## Workflow\n1. Call verify_xrp_payment with txHash\n2. Wait ~90s\n3. Call get_attestation_status with returned ID\n4. "verified" means confirmed on-chain`,
   },
   {
-    uri: "xrplink://network/status",
+    uri: NETWORK_STATUS_URI,
     name: "Live Network Status",
     description: "Real-time server health, wallet balance, and network status",
     handler: async () => {
@@ -75,16 +77,24 @@ const templates: ResourceTemplate[] = [
   },
 ];
 
-export function getResources() {
-  return templates.map((t) => ({
-    uri: t.uri,
-    name: t.name,
-    description: t.description,
-    mimeType: "text/markdown" as const,
-  }));
+export function getResources(opts?: { includePrivate?: boolean }) {
+  const ctx = getMcpContext();
+  const includePrivate = opts?.includePrivate ?? (!ctx.http || Boolean(ctx.apiKeyRecord));
+  return templates
+    .filter((t) => includePrivate || t.uri !== NETWORK_STATUS_URI)
+    .map((t) => ({
+      uri: t.uri,
+      name: t.name,
+      description: t.description,
+      mimeType: "text/markdown" as const,
+    }));
 }
 
 export async function readResource(uri: string): Promise<string | null> {
+  const ctx = getMcpContext();
+  if (uri === NETWORK_STATUS_URI && ctx.http && !ctx.apiKeyRecord) {
+    return null;
+  }
   const t = templates.find((x) => x.uri === uri);
   return t ? t.handler() : null;
 }

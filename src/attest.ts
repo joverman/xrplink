@@ -39,6 +39,7 @@ import {
   X402SettlementResponse,
 } from "./x402-service.js";
 import { VerifyResponse, ApiKey } from "./types.js";
+import { apiKeyLookupId } from "./api-keys.js";
 
 export interface AttestSuccess {
   kind: "ok";
@@ -150,9 +151,10 @@ async function resolveBillingPeriod(apiKey: ApiKey): Promise<BillingPeriod> {
 
 async function submitToFdc(
   cleanHash: string,
-  x402InvoiceId?: string
+  x402InvoiceId?: string,
+  ownerKeyId?: string
 ): Promise<AttestResult> {
-  const attestation = await store.createAttestation(cleanHash);
+  const attestation = await store.createAttestation(cleanHash, ownerKeyId);
 
   try {
     const proofOwner = fdcPrepareOverride
@@ -262,6 +264,15 @@ function recordReceiptForCaller(opts: { apiKeyHeader?: string; apiKeyRecord?: Ap
   if (owner) userStore.addReceipt(owner.id, txHash);
 }
 
+async function resolveOwnerKeyId(opts: { apiKeyHeader?: string; apiKeyRecord?: ApiKey }): Promise<string | undefined> {
+  if (opts.apiKeyRecord?.active) return apiKeyLookupId(opts.apiKeyRecord.key);
+  if (opts.apiKeyHeader) {
+    const found = await store.getApiKey(opts.apiKeyHeader);
+    if (found?.active) return apiKeyLookupId(found.key);
+  }
+  return undefined;
+}
+
 export async function attestXrpPayment(opts: {
   txHash: string;
   apiKeyHeader?: string;
@@ -298,7 +309,8 @@ export async function attestXrpPayment(opts: {
     try {
       const check = alreadyVerifiedOverride || fdc.isAlreadyVerified;
       if (await check(cleanHash)) {
-        const record = await store.createAttestation(cleanHash);
+        const ownerKeyId = await resolveOwnerKeyId(opts);
+        const record = await store.createAttestation(cleanHash, ownerKeyId);
         await store.updateAttestation(record.id, { status: "verified" });
         recordReceiptForCaller(opts, cleanHash);
         return {
@@ -387,7 +399,8 @@ export async function attestXrpPayment(opts: {
     settlement = paid.settlement;
   }
 
-  const result = await submitToFdc(cleanHash, x402InvoiceId);
+  const ownerKeyId = apiKey ? apiKeyLookupId(apiKey.key) : undefined;
+  const result = await submitToFdc(cleanHash, x402InvoiceId, ownerKeyId);
 
   if (result.kind === "ok" && !x402InvoiceId && isMainnet && billingPeriod && apiKey) {
     const periodKey = getBillingPeriodKey(billingPeriod);
