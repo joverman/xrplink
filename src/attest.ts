@@ -26,6 +26,7 @@ import {
   getFallbackBillingPeriod,
   getBillingPeriodKey,
   QuotaExceededError,
+  ATTESTATION_LIMITS,
 } from "./attestation-quota.js";
 import {
   isX402Configured,
@@ -355,16 +356,6 @@ export async function attestXrpPayment(opts: {
 
     if (isMainnet) {
       billingPeriod = await resolveBillingPeriod(apiKey);
-      const periodKey = getBillingPeriodKey(billingPeriod);
-      const currentUsage = await store.getAttestationUsage(apiKey.key, periodKey);
-      const quotaCheck = checkQuota(apiKey.tier, currentUsage, billingPeriod);
-      if (!quotaCheck.allowed) {
-        const quotaError = buildQuotaExceededError(quotaCheck);
-        if (isX402Configured()) {
-          return paymentRequiredResult(cleanHash, quotaError.message, quotaError);
-        }
-        return { kind: "error", httpStatus: 402, body: quotaError };
-      }
     }
   } else {
     if (isX402Configured()) {
@@ -373,52 +364,90 @@ export async function attestXrpPayment(opts: {
     return { kind: "error", httpStatus: 401, body: formatError("MISSING_API_KEY") };
   }
 
-  // Skip XRPL preflight when FDC is mocked (unit/integration tests).
-  if (!fdcPrepareOverride) {
-    const preflight = await preflightXrplPayment(cleanHash);
-    if (!preflight.ok) return preflightToAttestError(preflight);
-  }
-
-  if (paymentSignature) {
-    const paid = await processX402Payment(paymentSignature, cleanHash);
-    if (paid.outcome === "replay") {
-      return {
-        kind: "error",
-        httpStatus: 409,
-        body: { code: "PAYMENT_REPLAY", error: "PAYMENT_REPLAY", message: paid.error },
-      };
+  let reservedKey: string | undefined;
+  let reservedPeriod: string | undefined;
+  const releaseReservation = async () => {
+    if (reservedKey && reservedPeriod) {
+      await store.releaseAttestationUsage(reservedKey, reservedPeriod);
+      reservedKey = undefined;
+      reservedPeriod = undefined;
     }
-    if (paid.outcome === "failed") {
-      return {
-        kind: "error",
-        httpStatus: 402,
-        body: { code: "PAYMENT_FAILED", error: "PAYMENT_FAILED", message: paid.error },
-      };
+  };
+
+  try {
+    if (!paymentSignature && apiKey && isMainnet && billingPeriod) {
+      const periodKey = getBillingPeriodKey(billingPeriod);
+      const reservation = await store.reserveAttestationUsage(
+        apiKey.key,
+        periodKey,
+        ATTESTATION_LIMITS[apiKey.tier]
+      );
+      if (!reservation.reserved) {
+        const quotaCheck = checkQuota(apiKey.tier, reservation.used, billingPeriod);
+        const quotaError = buildQuotaExceededError({ ...quotaCheck, allowed: false, remaining: 0 });
+        if (isX402Configured()) {
+          return paymentRequiredResult(cleanHash, quotaError.message, quotaError);
+        }
+        return { kind: "error", httpStatus: 402, body: quotaError };
+      }
+      reservedKey = apiKey.key;
+      reservedPeriod = periodKey;
     }
-    x402InvoiceId = paid.invoiceId;
-    settlement = paid.settlement;
+
+    // Skip XRPL preflight when FDC is mocked (unit/integration tests).
+    if (!fdcPrepareOverride) {
+      const preflight = await preflightXrplPayment(cleanHash);
+      if (!preflight.ok) {
+        await releaseReservation();
+        return preflightToAttestError(preflight);
+      }
+    }
+
+    if (paymentSignature) {
+      const paid = await processX402Payment(paymentSignature, cleanHash);
+      if (paid.outcome === "replay") {
+        await releaseReservation();
+        return {
+          kind: "error",
+          httpStatus: 409,
+          body: { code: "PAYMENT_REPLAY", error: "PAYMENT_REPLAY", message: paid.error },
+        };
+      }
+      if (paid.outcome === "failed") {
+        await releaseReservation();
+        return {
+          kind: "error",
+          httpStatus: 402,
+          body: { code: "PAYMENT_FAILED", error: "PAYMENT_FAILED", message: paid.error },
+        };
+      }
+      x402InvoiceId = paid.invoiceId;
+      settlement = paid.settlement;
+    }
+
+    const ownerKeyId = apiKey ? apiKeyLookupId(apiKey.key) : undefined;
+    const result = await submitToFdc(cleanHash, x402InvoiceId, ownerKeyId);
+
+    if (result.kind !== "ok") {
+      await releaseReservation();
+    }
+
+    if (result.kind === "ok" && settlement) {
+      result.paymentResponseHeader = encodePaymentResponse(settlement);
+    }
+
+    if (result.kind === "ok") {
+      const owner =
+        (apiKey && userStore.findByApiKey(apiKey.key)) ||
+        (apiKeyHeader ? userStore.findByApiKey(apiKeyHeader) : undefined);
+      if (owner) userStore.addReceipt(owner.id, cleanHash);
+    }
+
+    return result;
+  } catch (err) {
+    await releaseReservation();
+    throw err;
   }
-
-  const ownerKeyId = apiKey ? apiKeyLookupId(apiKey.key) : undefined;
-  const result = await submitToFdc(cleanHash, x402InvoiceId, ownerKeyId);
-
-  if (result.kind === "ok" && !x402InvoiceId && isMainnet && billingPeriod && apiKey) {
-    const periodKey = getBillingPeriodKey(billingPeriod);
-    await store.incrementAttestationUsage(apiKey.key, periodKey);
-  }
-
-  if (result.kind === "ok" && settlement) {
-    result.paymentResponseHeader = encodePaymentResponse(settlement);
-  }
-
-  if (result.kind === "ok") {
-    const owner =
-      (apiKey && userStore.findByApiKey(apiKey.key)) ||
-      (apiKeyHeader ? userStore.findByApiKey(apiKeyHeader) : undefined);
-    if (owner) userStore.addReceipt(owner.id, cleanHash);
-  }
-
-  return result;
 }
 
 export async function pollForProof(id: string, roundId: number, abiEncoded: string, attempt = 1) {

@@ -32,6 +32,7 @@ import { getResources, readResource } from "./resources.js";
 import { getPromptDefs, getPromptContent } from "./prompts.js";
 import { attestXrpPayment } from "../attest.js";
 import { getMcpContext, runMcpContext, McpRequestContext } from "./context.js";
+import { checkVerifyRateLimit, clientIp } from "../rate-limit.js";
 
 const SERVER_NAME = "xrplink-mcp";
 const SERVER_VERSION = "0.3.0";
@@ -47,6 +48,12 @@ function toolOk(payload: unknown) {
 
 async function handleVerifyXrpPaymentWithAuth(args: Record<string, unknown>) {
   const requestContext = getMcpContext();
+  if (requestContext.http) {
+    const limited = checkVerifyRateLimit(requestContext.clientIp || "unknown", requestContext.apiKey);
+    if (!limited.allowed) {
+      return toolError(`Rate limit exceeded. Retry after ${limited.retryAfterSec}s.`);
+    }
+  }
   const result = await attestXrpPayment({
     txHash: args.txHash as string,
     apiKeyHeader: requestContext.apiKey,
@@ -169,7 +176,12 @@ export async function handleMcpRequest(req: Request, res: Response) {
   const apiKeyHeader = req.headers["x-api-key"] as string | undefined;
   const paymentSignature = req.headers["payment-signature"] as string | undefined;
 
-  const ctx: McpRequestContext = { http: true, apiKey: apiKeyHeader, paymentSignature };
+  const ctx: McpRequestContext = {
+    http: true,
+    apiKey: apiKeyHeader,
+    paymentSignature,
+    clientIp: clientIp(req),
+  };
   if (apiKeyHeader) {
     const apiKeyRecord = await store.getApiKey(apiKeyHeader);
     if (apiKeyRecord && apiKeyRecord.active) {

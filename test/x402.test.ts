@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { describe, it, before, after, beforeEach } from "node:test";
 import http from "node:http";
 import express from "express";
+import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +36,11 @@ let priceModule: typeof import("../src/price-service.js");
 let x402Module: typeof import("../src/x402-service.js");
 let attestModule: typeof import("../src/attest.js");
 let ledgerModule: typeof import("../src/x402-ledger.js");
+let xrplModule: typeof import("../src/xrpl-tx.js");
+
+function settleHashFor(invoiceId: string): string {
+  return createHash("sha256").update(`settle:${invoiceId}`).digest("hex").toUpperCase();
+}
 
 const TEST_PAY_TO = process.env.X402_PAY_TO_ADDRESS!;
 const MAINNET_RLUSD = "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De";
@@ -232,7 +238,7 @@ describe("x402 REST and MCP", () => {
     priceModule.setMockPrices(0.007, 2);
     priceModule.setOnChainFeeFailureForTests(true);
 
-    x402Module.setFacilitatorMockForTests(async (path) => {
+    x402Module.setFacilitatorMockForTests(async (path, body) => {
       facilitatorCalls.push({ path });
       if (path === "/verify") {
         if (failVerify) {
@@ -240,10 +246,37 @@ describe("x402 REST and MCP", () => {
         }
         return { ok: true, status: 200, json: { isValid: true } };
       }
+      const invoiceId = (body as any)?.paymentRequirements?.extra?.invoiceId || "unknown";
       return {
         ok: true,
         status: 200,
-        json: { success: true, transaction: "TESTSETTLETX", network: "xrpl:0", payer: "rPayerTest" },
+        json: {
+          success: true,
+          transaction: settleHashFor(invoiceId),
+          network: "xrpl:0",
+          payer: "rPayerTest",
+        },
+      };
+    });
+
+    xrplModule = await import("../src/xrpl-tx.js");
+    xrplModule.setXrplLookupForTests(async (hash) => {
+      const quotes = x402Module.listStoredQuotesForTests();
+      const quote = quotes.find((q) => settleHashFor(q.invoiceId) === hash.toUpperCase());
+      if (!quote) return { status: "not_found" };
+      const xrp = quote.accepts.find((a) => a.asset === "XRP") || quote.accepts[0];
+      return {
+        status: "found",
+        tx: {
+          Account: "rPayerTestxxxxxxxxxxxxxxxxxxxxxxxx",
+          Destination: xrp.payTo,
+          Amount: xrp.amount,
+          TransactionType: "Payment",
+          Flags: 0,
+          InvoiceID: x402Module.invoiceBindingHash(quote.invoiceId),
+          validated: true,
+          meta: { TransactionResult: "tesSUCCESS", delivered_amount: xrp.amount },
+        },
       };
     });
 
@@ -277,6 +310,7 @@ describe("x402 REST and MCP", () => {
     x402Module.resetX402ForTests();
     attestModule.setFdcMocksForTests(null);
     ledgerModule.resetX402LedgerForTests();
+    xrplModule.setXrplLookupForTests(null);
   });
 
   beforeEach(() => {
@@ -361,7 +395,7 @@ describe("x402 REST and MCP", () => {
     const quote = await request("POST", "/api/v1/verify/xrp-payment", { txHash });
     const invoiceId = quote.body.paymentRequired.accepts[0].extra.invoiceId;
     const eventsAfterQuote = ledgerModule.listX402LedgerEvents();
-    assert.ok(eventsAfterQuote.some((e) => e.type === "quote" && e.invoiceId === invoiceId));
+    assert.ok(!eventsAfterQuote.some((e) => e.invoiceId === invoiceId), "quotes must not write a ledger row");
 
     const sig = encodePayment(invoiceId);
     const paid = await request("POST", "/api/v1/verify/xrp-payment", { txHash }, { "PAYMENT-SIGNATURE": sig });

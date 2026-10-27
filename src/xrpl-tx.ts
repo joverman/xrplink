@@ -19,20 +19,36 @@ const XRP_RPC_ENDPOINTS = [
   "https://xrplcluster.com",
 ];
 
+export interface XrplIssuedAmount {
+  currency?: string;
+  issuer?: string;
+  value?: string;
+}
+
 export interface XrplTxResult {
   Account: string;
   Destination?: string;
-  Amount?: string | { currency?: string; issuer?: string; value?: string };
+  Amount?: string | XrplIssuedAmount;
   Fee?: string;
+  Flags?: number;
+  InvoiceID?: string;
   Memos?: { Memo: { MemoData?: string; MemoType?: string } }[];
   DestinationTag?: number;
   TransactionType: string;
-  meta?: { TransactionResult?: string };
+  hash?: string;
+  meta?: {
+    TransactionResult?: string;
+    delivered_amount?: string | XrplIssuedAmount;
+    DeliveredAmount?: string | XrplIssuedAmount;
+  };
   date?: number;
   validated?: boolean;
   ledger_index?: number;
   inLedger?: number;
 }
+
+/** tfPartialPayment — must not be set on an exact x402 Payment. */
+export const TF_PARTIAL_PAYMENT = 0x00020000;
 
 export type XrplLookup =
   | { status: "found"; tx: XrplTxResult }
