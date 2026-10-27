@@ -4,7 +4,7 @@ import { store } from "./store.js";
 import { config, activeNetwork } from "./config.js";
 import { requireApiKey, requireAuth, requireAdmin, requireSameOrigin, requireSessionCookie } from "./middleware.js";
 import { getRequestToken, setSessionCookie, clearSessionCookie } from "./session.js";
-import { getUserFromToken, issueSessionToken } from "./auth.js";
+import { getUserFromToken, issueSessionToken, revokeUserSessions } from "./auth.js";
 import { whiteLabel } from "./white-label.js";
 import { formatError } from "./mcp/errors.js";
 import { getPromptDefs, getPromptContent } from "./mcp/prompts.js";
@@ -120,7 +120,12 @@ router.post(
   return res.json({ token: result.token, apiKey: result.apiKey });
 });
 
-router.post("/auth/logout", (_req: Request, res: Response) => {
+router.post("/auth/logout", (req: Request, res: Response) => {
+  const token = getRequestToken(req);
+  if (token) {
+    const user = getUserFromToken(token);
+    if (user) revokeUserSessions(user.id);
+  }
   clearSessionCookie(res);
   res.json({ ok: true });
 });
@@ -193,9 +198,13 @@ router.post("/api/v1/keys/rotate", requireSessionCookie, requireSameOrigin, asyn
   if (!rotated) {
     return res.status(404).json(formatError("NOT_FOUND"));
   }
+  const fresh = userStore.findById(user.id);
+  const token = fresh ? issueSessionToken(fresh) : undefined;
+  if (token) setSessionCookie(res, token);
   return res.json({
     key: rotated.plaintext,
     apiKey: rotated.publicKey,
+    token,
     message: "Save this key now. It will not be shown again. The previous key no longer works.",
   });
 });
@@ -1481,6 +1490,7 @@ async function confirmRotate() {
       return;
     }
     localStorage.setItem(API_KEY_KEY, d.key);
+    if (d.token) localStorage.setItem(TOKEN_KEY, d.token);
     const val = document.querySelector('.api-key .val');
     if (val) val.textContent = d.key;
     const curl = document.getElementById('curlExample');

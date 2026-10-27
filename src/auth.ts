@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { userStore, StoredUser } from "./user-store.js";
@@ -12,12 +13,23 @@ function sessionSecret(): string {
 
 const SALT_ROUNDS = 10;
 
+export const SESSION_TOKEN_PURPOSE = "session";
+export const RESET_TOKEN_PURPOSE = "password_reset";
+export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
+
 export interface AuthResult {
   ok: boolean;
   user?: StoredUser;
   token?: string;
   apiKey?: string;
   error?: string;
+}
+
+export interface SessionPayload {
+  userId: string;
+  email: string;
+  purpose?: string;
+  sv?: number;
 }
 
 export async function signup(email: string, password: string): Promise<AuthResult> {
@@ -57,12 +69,24 @@ export function login(email: string, password: string): AuthResult {
 }
 
 export function issueSessionToken(user: StoredUser): string {
-  return jwt.sign({ userId: user.id, email: user.email }, sessionSecret(), { expiresIn: SESSION_TTL });
+  return jwt.sign(
+    {
+      userId: user.id,
+      email: user.email,
+      purpose: SESSION_TOKEN_PURPOSE,
+      sv: userStore.currentSessionVersion(user),
+    },
+    sessionSecret(),
+    { expiresIn: SESSION_TTL }
+  );
 }
 
-export function verifyToken(token: string): { userId: string; email: string } | null {
+export function verifyToken(token: string): SessionPayload | null {
   try {
-    const payload = jwt.verify(token, sessionSecret()) as { userId: string; email: string };
+    const payload = jwt.verify(token, sessionSecret()) as SessionPayload;
+    if (!payload?.userId) return null;
+    // Reset/verify tokens must never authenticate a session.
+    if (payload.purpose && payload.purpose !== SESSION_TOKEN_PURPOSE) return null;
     return payload;
   } catch {
     return null;
@@ -72,26 +96,54 @@ export function verifyToken(token: string): { userId: string; email: string } | 
 export function getUserFromToken(token: string): StoredUser | null {
   const payload = verifyToken(token);
   if (!payload) return null;
-  return userStore.findById(payload.userId) || null;
+  const user = userStore.findById(payload.userId);
+  if (!user) return null;
+  const current = userStore.currentSessionVersion(user);
+  if (payload.sv === undefined) {
+    // Pre-sv cookies stay valid until the first revocation bump (sessionVersion > 1).
+    if (current !== 1) return null;
+  } else if (payload.sv !== current) {
+    return null;
+  }
+  return user;
+}
+
+export function hashResetToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 export function generateResetToken(email: string): string | null {
   const user = userStore.findByEmail(email);
   if (!user) return null;
-  const token = jwt.sign({ userId: user.id, purpose: "reset" }, sessionSecret(), { expiresIn: "1h" });
+  const token = randomBytes(32).toString("base64url");
+  userStore.update(user.id, {
+    resetTokenHash: hashResetToken(token),
+    resetTokenExpiresAt: Date.now() + RESET_TOKEN_TTL_MS,
+  });
   sendPasswordResetEmail(email, token).catch(() => {});
   return token;
 }
 
 export function resetPassword(token: string, newPassword: string): AuthResult {
-  const payload = verifyToken(token);
-  if (!payload || !payload.userId) return { ok: false, error: "Invalid or expired reset token" };
+  if (!token || !newPassword) return { ok: false, error: "Invalid or expired reset token" };
+  if (newPassword.length < 8) return { ok: false, error: "Password must be at least 8 characters" };
 
-  const user = userStore.findById(payload.userId);
-  if (!user) return { ok: false, error: "User not found" };
+  const user = userStore.findByResetTokenHash(hashResetToken(token));
+  if (!user || !user.resetTokenExpiresAt || user.resetTokenExpiresAt < Date.now()) {
+    return { ok: false, error: "Invalid or expired reset token" };
+  }
 
   const passwordHash = bcrypt.hashSync(newPassword, SALT_ROUNDS);
-  userStore.update(user.id, { passwordHash });
+  userStore.update(user.id, {
+    passwordHash,
+    sessionVersion: userStore.currentSessionVersion(user) + 1,
+    resetTokenHash: undefined,
+    resetTokenExpiresAt: undefined,
+  });
 
-  return { ok: true, user, token: "" };
+  return { ok: true, user: userStore.findById(user.id), token: "" };
+}
+
+export function revokeUserSessions(userId: string): StoredUser | undefined {
+  return userStore.bumpSessionVersion(userId);
 }

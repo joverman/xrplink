@@ -288,6 +288,7 @@ describe("User Store", () => {
     assert.equal(user.tier, "free");
     assert.equal(user.subscriptionStatus, "none");
     assert.equal(user.stripeSubscriptionId, "");
+    assert.equal(user.sessionVersion, 1);
     
     userStore.update(user.id, {
       tier: "paid",

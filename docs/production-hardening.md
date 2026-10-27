@@ -131,7 +131,7 @@ STRIPE_AUTOMATIC_TAX=true
 
 | Stripe Event | App Action |
 |-------------|------------|
-| `checkout.session.completed` | Upgrade user to selected tier, set status=active |
+| `checkout.session.completed` | Upgrade user from the Stripe price lookup key (`xrplink_paid` → paid, `xrplink_pro` → pro). Unknown prices and `metadata.tier` / `?upgraded=` are ignored. |
 | `customer.subscription.updated` | Sync tier from price lookup_key, update status |
 | `customer.subscription.deleted` | Downgrade to free tier, set status=canceled |
 | `invoice.payment_failed` | Set status=past_due (grace period until Stripe retries end) |
@@ -286,7 +286,7 @@ volumes:
 
 For production, consider using PostgreSQL instead (`DATABASE_URL`).
 
-Login sessions are JWTs in an httpOnly `xrplink_session` cookie (30 days, rolling, SameSite=Lax). They are not stored on the server, so they survive a container restart as long as `SESSION_SECRET` stays the same and `DATA_DIR` (which holds `users.json`) is on a writable volume. No new env var is required.
+Login sessions are JWTs in an httpOnly `xrplink_session` cookie (30 days, rolling, SameSite=Lax). Each JWT carries a `sv` session version that must match `sessionVersion` on the user record in `users.json`. Logout, password reset, and API key rotation increment that version so outstanding cookies (and Bearer tokens) stop working. Pre-`sv` cookies remain valid until the first revocation bump (a one-time re-login is only required after those events, or if `SESSION_SECRET` changes). Password-reset links are opaque single-use secrets, stored as SHA-256, bound to password reset only, and expire in 1 hour. No new env var is required.
 
 If the container root filesystem is read-only, keep `DATA_DIR=/app/data` mounted read-write. User accounts used to be written to a relative `data/` path that could miss that volume.
 

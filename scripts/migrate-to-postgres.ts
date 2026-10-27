@@ -58,6 +58,7 @@ interface User {
   stripeCustomerId: string;
   tier: string;
   createdAt: string;
+  sessionVersion?: number;
 }
 
 async function main() {
@@ -184,21 +185,30 @@ async function main() {
         api_key_ids TEXT[] DEFAULT '{}',
         stripe_customer_id VARCHAR(255),
         tier VARCHAR(20) NOT NULL DEFAULT 'free',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        session_version INTEGER NOT NULL DEFAULT 1,
+        reset_token_hash VARCHAR(64),
+        reset_token_expires_at BIGINT
       );
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    `);
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_hash VARCHAR(64);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at BIGINT;
     `);
 
     for (const [id, user] of Object.entries(users)) {
       await pool.query(
-        `INSERT INTO users (id, email, password_hash, api_key_ids, stripe_customer_id, tier, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO users (id, email, password_hash, api_key_ids, stripe_customer_id, tier, created_at, session_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (id) DO UPDATE SET
            email = EXCLUDED.email,
            password_hash = EXCLUDED.password_hash,
            api_key_ids = EXCLUDED.api_key_ids,
            stripe_customer_id = EXCLUDED.stripe_customer_id,
-           tier = EXCLUDED.tier`,
+           tier = EXCLUDED.tier,
+           session_version = EXCLUDED.session_version`,
         [
           user.id,
           user.email,
@@ -207,6 +217,7 @@ async function main() {
           user.stripeCustomerId || null,
           user.tier,
           user.createdAt,
+          user.sessionVersion || 1,
         ]
       );
       stats.users++;
