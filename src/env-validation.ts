@@ -137,6 +137,14 @@ export function validateEnv(): EnvValidationResult {
     }
   }
 
+  if (isEffectivelyUnset(process.env.ADMIN_API_KEY)) {
+    warnings.push(
+      "ADMIN_API_KEY is not set. /api/v1/admin/* routes are disabled. " +
+        "Set a long random secret (e.g. `openssl rand -hex 32`) and send it as the X-Admin-Key header. " +
+        "Do not use a customer API key."
+    );
+  }
+
   // DATABASE_URL - for Postgres storage
   if (!process.env.DATABASE_URL) {
     warnings.push(
@@ -195,6 +203,7 @@ export function printValidationResult(result: EnvValidationResult): void {
     console.error("  WEBHOOK_SIGNING_SECRET - Secret for signing outbound webhooks");
     console.error("  DATABASE_URL           - Postgres connection string (Neon recommended)");
     console.error("  X402_PAY_TO_ADDRESS    - XRPL address to receive pay-per-use payments");
+    console.error("  ADMIN_API_KEY          - Operator secret for /api/v1/admin/* (X-Admin-Key)");
     console.error("");
   }
 }

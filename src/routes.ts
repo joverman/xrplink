@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import express from "express";
 import { store } from "./store.js";
 import { config, activeNetwork } from "./config.js";
-import { requireApiKey, requireAuth } from "./middleware.js";
+import { requireApiKey, requireAuth, requireAdmin, requireSameOrigin, requireSessionCookie } from "./middleware.js";
 import { getRequestToken, setSessionCookie, clearSessionCookie } from "./session.js";
 import { getUserFromToken, issueSessionToken } from "./auth.js";
 import { whiteLabel } from "./white-label.js";
@@ -14,7 +14,10 @@ import {
   RegisterWebhookBody, Tier,
 } from "./types.js";
 import { attestXrpPayment } from "./attest.js";
+import { userStore } from "./user-store.js";
 import { ATTESTATION_LIMITS } from "./attestation-quota.js";
+import { hashApiKey, toPublicApiKey } from "./api-keys.js";
+import { rotateUserApiKey } from "./key-rotation.js";
 import { fetchXrplTx, RIPPLE_EPOCH, FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS, FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "./xrpl-tx.js";
 
 const router = Router();
@@ -110,16 +113,87 @@ router.get("/me", requireAuth, async (req: Request, res: Response) => {
   const user = (req as any).user;
   setSessionCookie(res, issueSessionToken(user));
   const allKeys = await store.listApiKeys();
-  const keys = allKeys.filter((k) => user.apiKeyIds.includes(k.key));
-  res.json({ user: { id: user.id, email: user.email, tier: user.tier, createdAt: user.createdAt, usageCount: keys.reduce((s, k) => s + k.usageCount, 0) }, apiKeys: keys });
+  const ids = new Set(user.apiKeyIds);
+  const keys = allKeys.filter((k) => ids.has(k.key) || ids.has(hashApiKey(k.key)));
+  res.json({
+    user: { id: user.id, email: user.email, tier: user.tier, createdAt: user.createdAt, usageCount: keys.reduce((s, k) => s + k.usageCount, 0) },
+    apiKeys: keys.map((k) => toPublicApiKey(k)),
+  });
 });
 
 router.get("/receipts", requireAuth, async (req: Request, res: Response) => {
   const user = (req as any).user;
-  const allKeys = await store.listApiKeys();
-  const keys = allKeys.filter((k) => user.apiKeyIds.includes(k.key));
-  const all = await store.listAttestations();
-  res.json(all.slice(0, 50));
+  const hashes = [...(user.receiptTxHashes || [])].reverse();
+  const receipts = [];
+  for (const txHash of hashes) {
+    const attestation = await store.getByTxHash(txHash);
+    if (!attestation) continue;
+    receipts.push({
+      id: attestation.id,
+      txHash: attestation.txHash,
+      status: attestation.status,
+      createdAt: attestation.createdAt,
+      error: attestation.error,
+    });
+    if (receipts.length >= 50) break;
+  }
+  res.json(receipts);
+});
+
+router.post("/api/v1/keys/rotate", requireSessionCookie, requireSameOrigin, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const rotated = await rotateUserApiKey(user);
+  if (!rotated) {
+    return res.status(404).json(formatError("NOT_FOUND"));
+  }
+  return res.json({
+    key: rotated.plaintext,
+    apiKey: rotated.publicKey,
+    message: "Save this key now. It will not be shown again. The previous key no longer works.",
+  });
+});
+
+router.post("/api/v1/dashboard/verify", requireSessionCookie, requireSameOrigin, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const txHash = req.body?.txHash;
+  const keyId = user.apiKeyIds?.[0];
+  const apiKeyRecord = keyId ? await store.getApiKey(keyId) : undefined;
+  if (!apiKeyRecord || !apiKeyRecord.active) {
+    return res.status(400).json({
+      error: "NO_API_KEY",
+      message: "No API key is linked to this account. Regenerate a key from the dashboard.",
+    });
+  }
+  const result = await attestXrpPayment({ txHash, apiKeyRecord });
+  if (result.kind === "ok") {
+    userStore.addReceipt(user.id, result.body.txHash);
+    return res.status(result.httpStatus).json(result.body);
+  }
+  if (result.kind === "payment_required") {
+    return res.status(result.httpStatus).json(result.body);
+  }
+  return res.status(result.httpStatus).json(result.body);
+});
+
+router.get("/api/v1/dashboard/status/:id", requireAuth, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const attestation = await store.getAttestation(id);
+  if (!attestation) {
+    return res.status(404).json(formatError("NOT_FOUND"));
+  }
+  const owned = (user.receiptTxHashes || []).includes(attestation.txHash);
+  if (!owned) {
+    return res.status(404).json(formatError("NOT_FOUND"));
+  }
+  return res.json({
+    id: attestation.id,
+    txHash: attestation.txHash,
+    roundId: attestation.roundId,
+    status: attestation.status,
+    verifiedTxHash: attestation.verifiedTxHash,
+    error: attestation.error,
+  });
 });
 
 // --- Billing endpoints ---
@@ -241,7 +315,7 @@ async function handleLogin(e) {
     const d = await r.json();
     if (!r.ok) { error.textContent = d.message || d.error || 'Login failed'; error.style.display = 'block'; btn.disabled = false; btn.textContent = 'Log In'; return; }
     localStorage.setItem('xrplink_token', d.token);
-    localStorage.setItem('xrplink_api_key', d.apiKey);
+    if (d.apiKey) localStorage.setItem('xrplink_api_key', d.apiKey);
     window.location.href = '/dashboard';
   } catch(e) { error.textContent = 'Network error'; error.style.display = 'block'; btn.disabled = false; btn.textContent = 'Log In'; }
 }
@@ -1004,14 +1078,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .btn-primary{background:#818cf8;color:#0f172a}
 .btn-primary:hover{background:#6366f1}
 .btn-outline{background:transparent;color:#818cf8;border:1.5px solid #818cf8}
+.btn-sm{padding:0.4rem 0.9rem;font-size:0.8rem;width:auto}
+.api-card .actions{display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.75rem}
 .login-card{text-align:center;padding:3rem 1rem}
 .login-card h2{font-size:1.25rem;margin-bottom:0.5rem}
 .login-card p{color:#94a3b8;margin-bottom:1.5rem}
+.login-lookup{text-align:left;margin-top:2.5rem}
 .empty{color:#64748b;font-size:0.85rem;padding:1rem 0;text-align:center}
 .quickstart{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem}
 .quickstart h2{font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:0.75rem}
+.quickstart pre{margin:0 0 0.75rem;overflow-x:auto}
 .quickstart code{display:block;background:#0f172a;color:#cbd5e1;padding:0.85rem 1rem;border-radius:8px;font-family:"SF Mono","Fira Code",monospace;font-size:0.78rem;line-height:1.7;overflow-x:auto;margin-bottom:0.75rem;white-space:pre}
 .quickstart .tip{font-size:0.8rem;color:#64748b}
+.msg.pending{display:block;background:#1e3a5f;color:#93c5fd}
+.msg.quota{display:block;background:#5b3a1e;color:#fcd34d}
+.msg a{color:inherit;text-decoration:underline}
 .usage-bar{background:#0f172a;border-radius:6px;height:6px;overflow:hidden;margin-top:0.5rem}
 .usage-bar .fill{background:#818cf8;height:100%;border-radius:6px;transition:width 0.3s}
 </style></head>
@@ -1038,12 +1119,56 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
   <a href="/login" class="btn btn-primary">Log In</a>
   <br><br>
   <a href="/signup" class="btn btn-outline">Create an Account</a>
+  <div class="verify-box login-lookup">
+    <h2>Look up an existing receipt</h2>
+    <div class="verify-input">
+      <input type="text" id="guestTxHashInput" placeholder="Paste an XRP transaction hash..." spellcheck="false" onkeydown="if(event.key==='Enter')lookupExisting()">
+      <button type="button" onclick="lookupExisting()">Look Up</button>
+    </div>
+    <div class="msg info" id="guestLookupMsg" style="display:none">Logged-out lookup only shows existing receipts. Sign in to attest a new payment.</div>
+  </div>
 </div>
 </div>
 
 <script>
 const TOKEN_KEY = 'xrplink_token';
 const API_KEY_KEY = 'xrplink_api_key';
+const KEY_PLACEHOLDER = 'sk_live_YOUR_API_KEY';
+
+function isFullApiKey(k) {
+  return typeof k === 'string' && k.indexOf('sk_live_') === 0 && k.length > 40 && k.indexOf('…') === -1 && k.indexOf('...') === -1;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function curlApiKey() {
+  const stored = localStorage.getItem(API_KEY_KEY);
+  return isFullApiKey(stored) ? stored : KEY_PLACEHOLDER;
+}
+
+function displayApiKey(serverKey) {
+  const stored = localStorage.getItem(API_KEY_KEY);
+  if (isFullApiKey(stored)) return stored;
+  return serverKey || KEY_PLACEHOLDER;
+}
+
+function buildCurl(key) {
+  return [
+    'curl -X POST https://xrp-link.com/api/v1/verify/xrp-payment \\\\',
+    '  -H "Content-Type: application/json" \\\\',
+    '  -H "X-API-Key: ' + key + '" \\\\',
+    "  -d '{\\"txHash\\":\\"87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F\\"}'"
+  ].join('\\n');
+}
+
+function sessionHeaders(extra) {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const headers = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  return headers;
+}
 
 async function loadDashboard() {
   const token = localStorage.getItem(TOKEN_KEY);
@@ -1054,9 +1179,10 @@ async function loadDashboard() {
     // including after the cross-site Stripe Checkout redirect back.
     const r = await fetch('/me', { headers, credentials: 'include' });
     if (r.status === 401) {
-      // Session cookie expired/invalid — show login prompt, keep stored key for reference
       document.getElementById('loginPrompt').style.display = 'block';
       document.getElementById('loading').style.display = 'none';
+      const hint = document.getElementById('guestLookupMsg');
+      if (hint) hint.style.display = 'block';
       return;
     }
     if (!r.ok) {
@@ -1064,9 +1190,10 @@ async function loadDashboard() {
       return;
     }
     const data = await r.json();
-    // Refresh stored API key from server response
-    if (data.apiKeys && data.apiKeys[0]) {
-      localStorage.setItem(API_KEY_KEY, data.apiKeys[0].key);
+    // Never clobber a full secret with the masked key from /me.
+    const serverKey = data.apiKeys && data.apiKeys[0] && data.apiKeys[0].key;
+    if (isFullApiKey(serverKey)) {
+      localStorage.setItem(API_KEY_KEY, serverKey);
     }
     renderDashboard(data);
   } catch(e) {
@@ -1077,7 +1204,8 @@ async function loadDashboard() {
 function renderDashboard(data) {
   const user = data.user;
   const apiKeys = data.apiKeys;
-  const apiKey = apiKeys[0] || { key: localStorage.getItem(API_KEY_KEY) || 'Loading...' };
+  const apiKey = apiKeys[0] || { key: '' };
+  const shownKey = displayApiKey(apiKey.key);
   const tier = user.tier || 'free';
   const monthlyLimit = tier === 'free' ? ${ATTESTATION_LIMITS.free} : (tier === 'paid' ? ${ATTESTATION_LIMITS.paid} : ${ATTESTATION_LIMITS.pro});
   const usage = user.usageCount || 0;
@@ -1089,10 +1217,14 @@ function renderDashboard(data) {
     <div class="api-card">
       <h2>Your API Key</h2>
       <div class="api-key">
-        <span class="val">\${apiKey.key}</span>
-        <button class="copy-btn" onclick="copyKey(this)">Copy</button>
+        <span class="val">\${esc(shownKey)}</span>
+        <button type="button" class="copy-btn" onclick="copyKey(this)">Copy</button>
       </div>
-      <p style="color:#64748b;font-size:0.75rem;margin-top:0.5rem">Use this key in the <code>X-API-Key</code> header to call the API.</p>
+      <div class="actions">
+        <button type="button" class="btn btn-outline btn-sm" onclick="confirmRotate()">Regenerate API key</button>
+      </div>
+      <div id="keyNotice" class="msg info" style="display:none"></div>
+      <p style="color:#64748b;font-size:0.75rem;margin-top:0.5rem">Use this key in the <code>X-API-Key</code> header to call the API. The full secret is shown once at signup or after you regenerate.</p>
     </div>
 
     <div class="stats">
@@ -1109,20 +1241,17 @@ function renderDashboard(data) {
 
     <div class="quickstart">
       <h2>Quick Start</h2>
-      <code>curl -X POST https://xrp-link.com/api/v1/verify/xrp-payment \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: \${apiKey.key}" \\
-  -d '{"txHash":"87AD359A0DB9E27260AAE29766DC858886C54DAC4733D43B1B72CBB90E29B95F"}'</code>
+      <pre><code id="curlExample">\${esc(buildCurl(curlApiKey()))}</code></pre>
       <p class="tip">Returns an attestation ID. Check status with <code>GET /api/v1/status/:id</code>. Proof is ready in ~90-180 seconds. Full reference at <a href="/docs" style="color:#818cf8">/docs</a>.</p>
     </div>
 
     <div class="verify-box">
       <h2>Verify an XRP Payment</h2>
       <div class="verify-input">
-        <input type="text" id="txHashInput" placeholder="Paste an XRP transaction hash..." spellcheck="false">
-        <button onclick="lookupTx()">Look Up</button>
+        <input type="text" id="txHashInput" placeholder="Paste an XRP transaction hash..." spellcheck="false" onkeydown="if(event.key==='Enter')lookupTx()">
+        <button type="button" id="lookupBtn" onclick="lookupTx()">Look Up</button>
       </div>
-      <div class="msg info" id="lookupMsg" style="display:none">Enter a txHash to look up or attest a payment.</div>
+      <div class="msg info" id="lookupMsg" style="display:none">Enter a txHash to attest a payment. This uses your session — you do not paste your API key.</div>
     </div>
 
     <h2 style="font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:0.75rem">Your Receipts</h2>
@@ -1136,9 +1265,10 @@ function renderDashboard(data) {
     \${tier === 'free' ? \`
       <div class="upgrade-banner">
         <h3>Upgrade to create verified receipts</h3>
-        <p>Your free plan includes receipt lookup only. Upgrade to attest payments and generate cryptographic proofs.</p>
+        <p>Your free plan includes receipt lookup only. Upgrade to attest payments and generate cryptographic proofs, or pay per attestation with x402.</p>
         <button onclick="subscribe('paid')" class="btn btn-primary">Paid — \$29/mo</button>
         <button onclick="subscribe('pro')" class="btn btn-outline" style="margin-left:0.5rem">Pro — \$99/mo</button>
+        <p style="margin-top:0.75rem"><a href="/docs#x402" style="color:#93c5fd">Pay per attestation with x402 →</a></p>
       </div>
     \` : tier === 'paid' ? \`
       <div class="upgrade-banner" style="background:linear-gradient(135deg,#065f46,#0f172a);border-color:#065f46">
@@ -1163,11 +1293,9 @@ function renderDashboard(data) {
     banner.textContent = 'Payment successful! Your plan has been upgraded to ' + upgraded.charAt(0).toUpperCase() + upgraded.slice(1) + '.';
     const wrap = document.querySelector('.wrap');
     if (wrap) wrap.insertBefore(banner, wrap.firstChild.nextSibling);
-    // Clean the URL so a refresh doesn't re-show the message
     history.replaceState(null, '', '/dashboard');
   }
 
-  // Load receipts
   loadReceipts();
 }
 
@@ -1179,29 +1307,162 @@ async function loadReceipts() {
     if (!r.ok) return;
     const receipts = await r.json();
     const tbody = document.getElementById('receiptBody');
+    if (!tbody) return;
     if (receipts.length === 0) {
       tbody.innerHTML = '<tr><td colspan="4" class="empty">No receipts yet. Verify a payment above.</td></tr>';
       return;
     }
     tbody.innerHTML = receipts.slice(0, 20).map(r => \`
       <tr>
-        <td><code style="font-size:0.75rem;background:#1e293b;padding:0.15rem 0.35rem;border-radius:3px">\${r.txHash.slice(0, 20)}...</code></td>
-        <td><span class="status \${r.status}">\${r.status}</span></td>
-        <td style="color:#64748b;font-size:0.8rem">\${new Date(r.createdAt).toLocaleDateString()}</td>
-        <td><a href="/receipt/\${r.txHash}" style="color:#818cf8;text-decoration:none;font-size:0.8rem">View →</a></td>
+        <td><code style="font-size:0.75rem;background:#1e293b;padding:0.15rem 0.35rem;border-radius:3px">\${esc(r.txHash.slice(0, 20))}...</code></td>
+        <td><span class="status \${esc(r.status)}">\${esc(r.status)}</span></td>
+        <td style="color:#64748b;font-size:0.8rem">\${esc(new Date(r.createdAt).toLocaleDateString())}</td>
+        <td><a href="/receipt/\${esc(r.txHash)}" style="color:#818cf8;text-decoration:none;font-size:0.8rem">View →</a></td>
       </tr>
     \`).join('');
   } catch(e) {}
 }
 
-function lookupTx() {
-  const hash = document.getElementById('txHashInput').value.trim();
+function lookupExisting() {
+  const input = document.getElementById('guestTxHashInput');
+  const hash = (input && input.value || '').trim().replace(/^0x/i, '').toUpperCase();
   if (!hash) return;
-  window.location.href = '/receipt/' + hash.replace(/^0x/i, '').toUpperCase();
+  window.location.href = '/receipt/' + encodeURIComponent(hash);
+}
+
+function showLookupMsg(kind, html) {
+  const el = document.getElementById('lookupMsg');
+  if (!el) return;
+  el.className = 'msg ' + kind;
+  el.style.display = 'block';
+  el.innerHTML = html;
+}
+
+function showQuotaMessage(d) {
+  const msg = esc(d.message || 'Monthly attestation quota reached.');
+  showLookupMsg(
+    'quota',
+    '<strong>Quota reached.</strong> ' + msg +
+      ' <a href="/pricing">Upgrade your plan</a> or <a href="/docs#x402">pay per attestation with x402</a>.'
+  );
+}
+
+function renderAttestationStatus(d) {
+  const status = d.status || 'unknown';
+  const err = d.error || d.message || '';
+  const code = d.code || '';
+  const receiptLink = d.txHash
+    ? ' <a href="/receipt/' + esc(d.txHash) + '">View receipt →</a>'
+    : '';
+  if (status === 'pending') {
+    showLookupMsg('pending', 'Pending — waiting for Flare FDC (~90–180s).' + (d.id ? ' Id <code>' + esc(d.id) + '</code>.' : ''));
+  } else if (status === 'ready') {
+    showLookupMsg('info', 'Ready — proof available.' + receiptLink);
+  } else if (status === 'verified') {
+    showLookupMsg('success', 'Verified.' + receiptLink);
+  } else if (status === 'failed' || status === 'not_found') {
+    showLookupMsg('error', '<strong>' + esc(code || status) + '</strong> — ' + esc(err || 'Attestation failed.') + receiptLink);
+  } else {
+    showLookupMsg('info', esc(status) + (err ? ' — ' + esc(err) : '') + receiptLink);
+  }
+}
+
+async function pollDashboardStatus(id) {
+  const started = Date.now();
+  const maxMs = 180000;
+  while (Date.now() - started < maxMs) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const r = await fetch('/api/v1/dashboard/status/' + encodeURIComponent(id), {
+      credentials: 'include',
+      headers: sessionHeaders()
+    });
+    if (!r.ok) {
+      showLookupMsg('error', 'Could not load attestation status.');
+      return;
+    }
+    const d = await r.json();
+    renderAttestationStatus(d);
+    if (d.status && d.status !== 'pending') {
+      loadReceipts();
+      return;
+    }
+  }
+  showLookupMsg('info', 'Still pending. Check Your receipts in a minute.');
+}
+
+async function lookupTx() {
+  const input = document.getElementById('txHashInput');
+  const hash = (input && input.value || '').trim().replace(/^0x/i, '').toUpperCase();
+  if (!hash) return;
+  const btn = document.getElementById('lookupBtn');
+  if (btn) btn.disabled = true;
+  showLookupMsg('info', 'Starting attestation…');
+  try {
+    const r = await fetch('/api/v1/dashboard/verify', {
+      method: 'POST',
+      credentials: 'include',
+      headers: sessionHeaders(),
+      body: JSON.stringify({ txHash: hash })
+    });
+    const d = await r.json();
+    if (r.status === 402 || d.code === 'QUOTA_EXCEEDED' || d.code === 'PAYMENT_REQUIRED') {
+      showQuotaMessage(d);
+      return;
+    }
+    if (!r.ok) {
+      const err = d.code || d.error || 'LOOKUP_FAILED';
+      const msg = d.message || 'Could not verify this payment.';
+      showLookupMsg('error', '<strong>' + esc(err) + '</strong> — ' + esc(msg));
+      return;
+    }
+    renderAttestationStatus(d);
+    loadReceipts();
+    if ((d.status === 'pending' || d.status === 'ready') && d.id) {
+      pollDashboardStatus(d.id);
+    }
+  } catch (e) {
+    showLookupMsg('error', 'Network error. Try again.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function confirmRotate() {
+  if (!confirm('Regenerate your API key? The current key stops working immediately. You will see the new key once.')) return;
+  try {
+    const r = await fetch('/api/v1/keys/rotate', {
+      method: 'POST',
+      credentials: 'include',
+      headers: sessionHeaders()
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      alert(d.message || 'Could not regenerate key.');
+      return;
+    }
+    localStorage.setItem(API_KEY_KEY, d.key);
+    const val = document.querySelector('.api-key .val');
+    if (val) val.textContent = d.key;
+    const curl = document.getElementById('curlExample');
+    if (curl) curl.textContent = buildCurl(d.key);
+    const note = document.getElementById('keyNotice');
+    if (note) {
+      note.style.display = 'block';
+      note.className = 'msg success';
+      note.textContent = d.message || 'Save this key now. It will not be shown again.';
+    }
+  } catch (e) {
+    alert('Could not regenerate key.');
+  }
 }
 
 function copyKey(btn) {
   const key = btn.parentElement.querySelector('.val').textContent;
+  if (!isFullApiKey(key)) {
+    btn.textContent = 'Hidden';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+    return;
+  }
   navigator.clipboard.writeText(key).then(() => {
     btn.textContent = 'Copied!';
     btn.classList.add('copied');
@@ -1609,45 +1870,29 @@ router.post("/api/v1/webhooks", requireApiKey, async (req: Request, res: Respons
   return res.status(201).json({ id: webhook.id, url: webhook.url, attestationId: webhook.attestationId });
 });
 
-// --- Admin routes ---
+// --- Admin routes (ADMIN_API_KEY / X-Admin-Key only; customer keys never pass) ---
 
-router.get("/api/v1/admin/white-label", requireApiKey, (req: Request, res: Response) => {
-  if ((req as any).apiKey.tier !== "pro") {
-    return res.status(403).json(formatError("FORBIDDEN"));
-  }
+router.get("/api/v1/admin/white-label", requireAdmin, (_req: Request, res: Response) => {
   res.json(whiteLabel.get());
 });
 
-router.put("/api/v1/admin/white-label", requireApiKey, (req: Request, res: Response) => {
-  if ((req as any).apiKey.tier !== "pro") {
-    return res.status(403).json(formatError("FORBIDDEN"));
-  }
+router.put("/api/v1/admin/white-label", requireAdmin, (req: Request, res: Response) => {
   const updated = whiteLabel.update(req.body);
   res.json(updated);
 });
 
-router.post("/api/v1/admin/keys", requireApiKey, async (req: Request, res: Response) => {
-  const requester = (req as any).apiKey;
-  if (!requester || requester.tier !== "pro") {
-    return res.status(403).json(formatError("FORBIDDEN"));
-  }
+router.post("/api/v1/admin/keys", requireAdmin, async (req: Request, res: Response) => {
   const { name, tier } = req.body as { name?: string; tier?: Tier };
   const apiKey = await store.createApiKey(name || "unnamed", tier || "free");
   return res.status(201).json({ key: apiKey.key, name: apiKey.name, tier: apiKey.tier });
 });
 
-router.get("/api/v1/admin/keys", requireApiKey, async (req: Request, res: Response) => {
-  const requester = (req as any).apiKey;
-  if (!requester || requester.tier !== "pro") {
-    return res.status(403).json(formatError("FORBIDDEN"));
-  }
-  return res.json(await store.listApiKeys());
+router.get("/api/v1/admin/keys", requireAdmin, async (_req: Request, res: Response) => {
+  const keys = await store.listApiKeys();
+  return res.json(keys.map((k) => toPublicApiKey(k, { includeId: true })));
 });
 
-router.get("/api/v1/admin/x402-margin", requireApiKey, async (req: Request, res: Response) => {
-  if ((req as any).apiKey.tier !== "pro") {
-    return res.status(403).json(formatError("FORBIDDEN"));
-  }
+router.get("/api/v1/admin/x402-margin", requireAdmin, async (req: Request, res: Response) => {
   const { getDailyMargin, getMarginSummaries } = await import("./x402-ledger.js");
   const date = typeof req.query.date === "string" ? req.query.date : undefined;
   const from = typeof req.query.from === "string" ? req.query.from : undefined;
@@ -1658,11 +1903,7 @@ router.get("/api/v1/admin/x402-margin", requireApiKey, async (req: Request, res:
   return res.json(getDailyMargin(date));
 });
 
-router.delete("/api/v1/admin/keys/:key", requireApiKey, async (req: Request, res: Response) => {
-  const requester = (req as any).apiKey;
-  if (!requester || requester.tier !== "pro") {
-    return res.status(403).json(formatError("FORBIDDEN"));
-  }
+router.delete("/api/v1/admin/keys/:key", requireAdmin, async (req: Request, res: Response) => {
   const keyParam = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
   const deleted = await store.deleteApiKey(keyParam);
   if (!deleted) {

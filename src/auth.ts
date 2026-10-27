@@ -4,6 +4,7 @@ import { userStore, StoredUser } from "./user-store.js";
 import { store } from "./store.js";
 import { sendWelcomeEmail, sendPasswordResetEmail } from "./email.js";
 import { SESSION_TTL } from "./session.js";
+import { hashApiKey } from "./api-keys.js";
 
 function sessionSecret(): string {
   return process.env.SESSION_SECRET || "dev-secret-change-in-prod";
@@ -30,7 +31,7 @@ export async function signup(email: string, password: string): Promise<AuthResul
   const user = userStore.create(email, passwordHash);
 
   const apiKey = await store.createApiKey(`User: ${email}`, "free");
-  userStore.update(user.id, { apiKeyIds: [apiKey.key] });
+  userStore.update(user.id, { apiKeyIds: [hashApiKey(apiKey.key)] });
 
   const token = issueSessionToken(user);
 
@@ -50,7 +51,9 @@ export function login(email: string, password: string): AuthResult {
   }
 
   const token = issueSessionToken(user);
-  return { ok: true, user, token, apiKey: user.apiKeyIds[0] || "" };
+  // Hashed keys cannot be recovered on login. Clients use the session cookie
+  // and rotate from the dashboard if they no longer have the secret.
+  return { ok: true, user, token };
 }
 
 export function issueSessionToken(user: StoredUser): string {
@@ -90,5 +93,5 @@ export function resetPassword(token: string, newPassword: string): AuthResult {
   const passwordHash = bcrypt.hashSync(newPassword, SALT_ROUNDS);
   userStore.update(user.id, { passwordHash });
 
-  return { ok: true, user, token: "", apiKey: user.apiKeyIds[0] || "" };
+  return { ok: true, user, token: "" };
 }

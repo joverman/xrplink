@@ -52,12 +52,15 @@ export interface ProofResponse {
 }
 
 export interface ApiKey {
+  /** SHA-256 hex of the secret (or, until migrated, the plaintext sk_live_ value). */
   key: string;
   name: string;
   tier: Tier;
   active: boolean;
   usageCount: number;
   createdAt: string;
+  keyPrefix?: string;
+  keyLast4?: string;
 }
 
 export interface Webhook {

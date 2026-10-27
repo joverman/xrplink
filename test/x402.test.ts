@@ -25,6 +25,7 @@ process.env.X402_MARKUP = "3";
 process.env.X402_XRP_BUFFER = "0.01";
 process.env.ATTESTATION_FEE_FLR = "20";
 process.env.X402_QUOTE_TTL_MS = "120000";
+process.env.ADMIN_API_KEY = process.env.ADMIN_API_KEY || "x402-test-admin-key";
 delete process.env.X402_RLUSD_ISSUER;
 
 const PORT = 3459;
@@ -377,12 +378,17 @@ describe("x402 REST and MCP", () => {
     assert.ok(margin.marginUsd > 0);
   });
 
-  it("serves the daily margin summary on the pro-only admin endpoint", async () => {
+  it("serves the daily margin summary only with X-Admin-Key", async () => {
+    process.env.ADMIN_API_KEY = process.env.ADMIN_API_KEY || "x402-test-admin-key";
     const pro = await storeModule.store.createApiKey("margin-admin", "pro");
     const paid = await storeModule.store.createApiKey("margin-paid", "paid");
-    const forbidden = await request("GET", "/api/v1/admin/x402-margin", undefined, { "X-API-Key": paid.key });
-    assert.equal(forbidden.status, 403);
-    const ok = await request("GET", "/api/v1/admin/x402-margin", undefined, { "X-API-Key": pro.key });
+    const forbiddenPaid = await request("GET", "/api/v1/admin/x402-margin", undefined, { "X-API-Key": paid.key });
+    assert.equal(forbiddenPaid.status, 403);
+    const forbiddenPro = await request("GET", "/api/v1/admin/x402-margin", undefined, { "X-API-Key": pro.key });
+    assert.equal(forbiddenPro.status, 403);
+    const ok = await request("GET", "/api/v1/admin/x402-margin", undefined, {
+      "X-Admin-Key": process.env.ADMIN_API_KEY,
+    });
     assert.equal(ok.status, 200);
     assert.ok(typeof ok.body.revenueUsd === "number");
     assert.ok(typeof ok.body.flrCostUsd === "number");

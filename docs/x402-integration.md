@@ -84,7 +84,7 @@ Quotes expire after 120 seconds (`X402_QUOTE_TTL_MS`). Ask for a new 402 if the 
 
 Every issued quote and every settled payment is appended to `data/x402-ledger.json` (JSON file storage; `DATABASE_URL` is unset in production). Events are linkable by `invoiceId`. Logs include time, asset, amount, USD price, FLR/USD used, and fee FLR. No customer names.
 
-Daily margin (revenue USD vs FLR cost) is available to a pro-tier API key:
+Daily margin (revenue USD vs FLR cost) is available only with the server `ADMIN_API_KEY` sent as `X-Admin-Key`. Customer API keys of any tier, including Pro, are rejected.
 
 ```
 GET /api/v1/admin/x402-margin

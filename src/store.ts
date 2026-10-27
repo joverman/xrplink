@@ -3,6 +3,13 @@ import { join, dirname } from "path";
 import { tmpdir } from "os";
 import { v4 as uuid } from "uuid";
 import { Attestation, AttestationStatus, ApiKey, Tier, Webhook } from "./types.js";
+import {
+  apiKeyDisplayParts,
+  apiKeyLookupId,
+  generateApiKeyPlaintext,
+  hashApiKey,
+  isPlaintextApiKey,
+} from "./api-keys.js";
 
 const DATA_DIR = process.env.DATA_DIR || "data";
 const ATTESTATIONS_PATH = join(DATA_DIR, "attestations.json");
@@ -37,6 +44,9 @@ interface Store {
   deleteApiKey(key: string): Promise<boolean>;
   incrementApiKeyUsage(key: string): Promise<void>;
   updateApiKeyTier(key: string, tier: Tier): Promise<boolean>;
+  setApiKeyUsageCount(key: string, count: number): Promise<boolean>;
+  /** Copy monthly attestation quota from an old key id onto a new one, then drop the old rows. */
+  rekeyAttestationUsage(oldKey: string, newKey: string): Promise<void>;
   registerWebhook(url: string, attestationId: string | null, secret?: string): Promise<Webhook>;
   getWebhooksForAttestation(attestationId: string): Promise<Webhook[]>;
   getWebhook(id: string): Promise<Webhook | undefined>;
@@ -46,6 +56,39 @@ interface Store {
   getAttestationUsage(apiKey: string, periodKey: string): Promise<number>;
   /** Increment attestation count for an API key in a specific billing period */
   incrementAttestationUsage(apiKey: string, periodKey: string): Promise<number>;
+}
+
+function migrateJsonApiKeys(raw: Record<string, ApiKey>): Record<string, ApiKey> {
+  const next: Record<string, ApiKey> = {};
+  for (const [id, record] of Object.entries(raw)) {
+    if (isPlaintextApiKey(id) || isPlaintextApiKey(record.key)) {
+      const plaintext = isPlaintextApiKey(id) ? id : record.key;
+      const hashed = hashApiKey(plaintext);
+      const display = apiKeyDisplayParts(plaintext);
+      next[hashed] = {
+        ...record,
+        key: hashed,
+        keyPrefix: record.keyPrefix || display.keyPrefix,
+        keyLast4: record.keyLast4 || display.keyLast4,
+      };
+    } else {
+      next[id] = record;
+    }
+  }
+  return next;
+}
+
+function migrateJsonAttestationUsage(raw: Record<string, number>): Record<string, number> {
+  const next: Record<string, number> = {};
+  for (const [usageKey, count] of Object.entries(raw)) {
+    const sep = usageKey.lastIndexOf(":");
+    const id = sep >= 0 ? usageKey.slice(0, sep) : usageKey;
+    const period = sep >= 0 ? usageKey.slice(sep + 1) : "";
+    const normalized = apiKeyLookupId(id);
+    const newKey = period ? `${normalized}:${period}` : normalized;
+    next[newKey] = (next[newKey] || 0) + count;
+  }
+  return next;
 }
 
 function atomicWriteFileSync(path: string, data: string): void {
@@ -71,6 +114,11 @@ class JsonFileStore implements Store {
 
   constructor() {
     this.data = this.load();
+    try {
+      this.syncPersist();
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : String(err);
+    }
   }
 
   private load(): PersistedData {
@@ -85,11 +133,14 @@ class JsonFileStore implements Store {
       for (const [id, a] of Object.entries(attestations)) {
         txHashIndex[a.txHash.toLowerCase()] = id;
       }
-      const apiKeys = (this.readJson(API_KEYS_PATH) || {}) as Record<string, ApiKey>;
+      const apiKeys = migrateJsonApiKeys((this.readJson(API_KEYS_PATH) || {}) as Record<string, ApiKey>);
       const webhooks = (this.readJson(WEBHOOKS_PATH) || {}) as Record<string, Webhook>;
-      const attestationUsage = (this.readJson(ATTESTATION_USAGE_PATH) || {}) as Record<string, number>;
+      const attestationUsage = migrateJsonAttestationUsage(
+        (this.readJson(ATTESTATION_USAGE_PATH) || {}) as Record<string, number>
+      );
       this.lastError = undefined;
-      return { attestations, txHashIndex, apiKeys, webhooks, attestationUsage };
+      const loaded = { attestations, txHashIndex, apiKeys, webhooks, attestationUsage };
+      return loaded;
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
       return empty;
@@ -165,15 +216,28 @@ class JsonFileStore implements Store {
   }
 
   async createApiKey(name: string, tier: Tier = "free"): Promise<ApiKey> {
-    const key = "sk_live_" + uuid().replace(/-/g, "") + uuid().replace(/-/g, "");
-    const record: ApiKey = { key, name, tier, active: true, usageCount: 0, createdAt: new Date().toISOString() };
-    this.data.apiKeys[key] = record;
+    const plaintext = generateApiKeyPlaintext();
+    const id = hashApiKey(plaintext);
+    const display = apiKeyDisplayParts(plaintext);
+    const record: ApiKey = {
+      key: id,
+      name,
+      tier,
+      active: true,
+      usageCount: 0,
+      createdAt: new Date().toISOString(),
+      ...display,
+    };
+    this.data.apiKeys[id] = record;
     this.syncPersist();
-    return record;
+    return { ...record, key: plaintext };
   }
 
   async getApiKey(key: string): Promise<ApiKey | undefined> {
-    return this.data.apiKeys[key];
+    const hashed = apiKeyLookupId(key);
+    if (this.data.apiKeys[hashed]) return this.data.apiKeys[hashed];
+    if (this.data.apiKeys[key]) return this.data.apiKeys[key];
+    return undefined;
   }
 
   async listApiKeys(): Promise<ApiKey[]> {
@@ -181,14 +245,17 @@ class JsonFileStore implements Store {
   }
 
   async deleteApiKey(key: string): Promise<boolean> {
-    const exists = !!this.data.apiKeys[key];
-    delete this.data.apiKeys[key];
-    if (exists) this.syncPersist();
-    return exists;
+    const hashed = apiKeyLookupId(key);
+    const id = this.data.apiKeys[hashed] ? hashed : this.data.apiKeys[key] ? key : "";
+    if (!id) return false;
+    delete this.data.apiKeys[id];
+    this.syncPersist();
+    return true;
   }
 
   async incrementApiKeyUsage(key: string): Promise<void> {
-    const record = this.data.apiKeys[key];
+    const hashed = apiKeyLookupId(key);
+    const record = this.data.apiKeys[hashed] || this.data.apiKeys[key];
     if (record) {
       record.usageCount++;
       this.syncPersist();
@@ -196,11 +263,40 @@ class JsonFileStore implements Store {
   }
 
   async updateApiKeyTier(key: string, tier: Tier): Promise<boolean> {
-    const record = this.data.apiKeys[key];
+    const hashed = apiKeyLookupId(key);
+    const record = this.data.apiKeys[hashed] || this.data.apiKeys[key];
     if (!record) return false;
     record.tier = tier;
     this.syncPersist();
     return true;
+  }
+
+  async setApiKeyUsageCount(key: string, count: number): Promise<boolean> {
+    const hashed = apiKeyLookupId(key);
+    const record = this.data.apiKeys[hashed] || this.data.apiKeys[key];
+    if (!record) return false;
+    record.usageCount = count;
+    this.syncPersist();
+    return true;
+  }
+
+  async rekeyAttestationUsage(oldKey: string, newKey: string): Promise<void> {
+    const from = apiKeyLookupId(oldKey);
+    const to = apiKeyLookupId(newKey);
+    const next: Record<string, number> = {};
+    for (const [usageKey, count] of Object.entries(this.data.attestationUsage)) {
+      const sep = usageKey.lastIndexOf(":");
+      const id = sep >= 0 ? usageKey.slice(0, sep) : usageKey;
+      const period = sep >= 0 ? usageKey.slice(sep + 1) : "";
+      const normalized = apiKeyLookupId(id);
+      if (normalized === from || id === oldKey) {
+        next[`${to}:${period}`] = (next[`${to}:${period}`] || 0) + count;
+      } else {
+        next[usageKey] = count;
+      }
+    }
+    this.data.attestationUsage = next;
+    this.syncPersist();
   }
 
   async registerWebhook(url: string, attestationId: string | null, secret?: string): Promise<Webhook> {
@@ -229,12 +325,12 @@ class JsonFileStore implements Store {
   }
 
   async getAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
-    const usageKey = `${apiKey}:${periodKey}`;
+    const usageKey = `${apiKeyLookupId(apiKey)}:${periodKey}`;
     return this.data.attestationUsage[usageKey] || 0;
   }
 
   async incrementAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
-    const usageKey = `${apiKey}:${periodKey}`;
+    const usageKey = `${apiKeyLookupId(apiKey)}:${periodKey}`;
     const current = this.data.attestationUsage[usageKey] || 0;
     this.data.attestationUsage[usageKey] = current + 1;
     this.syncPersist();
@@ -295,9 +391,13 @@ class PostgresStore implements Store {
         tier VARCHAR(20) NOT NULL DEFAULT 'free',
         active BOOLEAN NOT NULL DEFAULT true,
         usage_count INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        key_prefix VARCHAR(16),
+        key_last4 VARCHAR(8)
       );
     `);
+    await this.pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_prefix VARCHAR(16)`);
+    await this.pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_last4 VARCHAR(8)`);
 
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS webhooks (
@@ -326,6 +426,46 @@ class PostgresStore implements Store {
       type: "postgres",
       error: this.lastError,
     };
+  }
+
+  private rowToApiKey(row: any): ApiKey {
+    return {
+      key: row.key,
+      name: row.name,
+      tier: row.tier as Tier,
+      active: row.active,
+      usageCount: row.usage_count,
+      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+      keyPrefix: row.key_prefix || undefined,
+      keyLast4: row.key_last4 || undefined,
+    };
+  }
+
+  private async migratePostgresApiKeyRow(row: any): Promise<void> {
+    if (!isPlaintextApiKey(row.key)) return;
+    const plaintext = row.key;
+    const hashed = hashApiKey(plaintext);
+    const display = apiKeyDisplayParts(plaintext);
+    await this.pool.query(
+      `INSERT INTO api_keys (key, name, tier, active, usage_count, created_at, key_prefix, key_last4)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (key) DO NOTHING`,
+      [
+        hashed,
+        row.name,
+        row.tier,
+        row.active,
+        row.usage_count,
+        row.created_at,
+        display.keyPrefix,
+        display.keyLast4,
+      ]
+    );
+    await this.pool.query(`DELETE FROM api_keys WHERE key = $1`, [plaintext]);
+    await this.pool.query(
+      `UPDATE attestation_usage SET api_key = $1 WHERE api_key = $2`,
+      [hashed, plaintext]
+    );
   }
 
   private rowToAttestation(row: any): Attestation {
@@ -398,60 +538,78 @@ class PostgresStore implements Store {
   }
 
   async createApiKey(name: string, tier: Tier = "free"): Promise<ApiKey> {
-    const key = "sk_live_" + uuid().replace(/-/g, "") + uuid().replace(/-/g, "");
+    const plaintext = generateApiKeyPlaintext();
+    const id = hashApiKey(plaintext);
+    const display = apiKeyDisplayParts(plaintext);
     const result = await this.pool.query(
-      `INSERT INTO api_keys (key, name, tier) VALUES ($1, $2, $3) RETURNING *`,
-      [key, name, tier]
+      `INSERT INTO api_keys (key, name, tier, key_prefix, key_last4) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [id, name, tier, display.keyPrefix, display.keyLast4]
     );
-    const row = result.rows[0];
-    return {
-      key: row.key,
-      name: row.name,
-      tier: row.tier as Tier,
-      active: row.active,
-      usageCount: row.usage_count,
-      createdAt: row.created_at.toISOString(),
-    };
+    const record = this.rowToApiKey(result.rows[0]);
+    return { ...record, key: plaintext };
   }
 
   async getApiKey(key: string): Promise<ApiKey | undefined> {
-    const result = await this.pool.query(`SELECT * FROM api_keys WHERE key = $1`, [key]);
+    const hashed = apiKeyLookupId(key);
+    let result = await this.pool.query(`SELECT * FROM api_keys WHERE key = $1`, [hashed]);
+    if (!result.rows[0] && key !== hashed) {
+      result = await this.pool.query(`SELECT * FROM api_keys WHERE key = $1`, [key]);
+      if (result.rows[0] && isPlaintextApiKey(result.rows[0].key)) {
+        await this.migratePostgresApiKeyRow(result.rows[0]);
+        result = await this.pool.query(`SELECT * FROM api_keys WHERE key = $1`, [hashed]);
+      }
+    }
     if (!result.rows[0]) return undefined;
-    const row = result.rows[0];
-    return {
-      key: row.key,
-      name: row.name,
-      tier: row.tier as Tier,
-      active: row.active,
-      usageCount: row.usage_count,
-      createdAt: row.created_at.toISOString(),
-    };
+    return this.rowToApiKey(result.rows[0]);
   }
 
   async listApiKeys(): Promise<ApiKey[]> {
     const result = await this.pool.query(`SELECT * FROM api_keys ORDER BY created_at DESC`);
-    return result.rows.map((row: any) => ({
-      key: row.key,
-      name: row.name,
-      tier: row.tier as Tier,
-      active: row.active,
-      usageCount: row.usage_count,
-      createdAt: row.created_at.toISOString(),
-    }));
+    return result.rows.map((row: any) => this.rowToApiKey(row));
   }
 
   async deleteApiKey(key: string): Promise<boolean> {
-    const result = await this.pool.query(`DELETE FROM api_keys WHERE key = $1`, [key]);
+    const hashed = apiKeyLookupId(key);
+    let result = await this.pool.query(`DELETE FROM api_keys WHERE key = $1`, [hashed]);
+    if (result.rowCount === 0 && key !== hashed) {
+      result = await this.pool.query(`DELETE FROM api_keys WHERE key = $1`, [key]);
+    }
     return result.rowCount > 0;
   }
 
   async incrementApiKeyUsage(key: string): Promise<void> {
-    await this.pool.query(`UPDATE api_keys SET usage_count = usage_count + 1 WHERE key = $1`, [key]);
+    const hashed = apiKeyLookupId(key);
+    const updated = await this.pool.query(`UPDATE api_keys SET usage_count = usage_count + 1 WHERE key = $1`, [hashed]);
+    if (updated.rowCount === 0 && key !== hashed) {
+      await this.pool.query(`UPDATE api_keys SET usage_count = usage_count + 1 WHERE key = $1`, [key]);
+    }
   }
 
   async updateApiKeyTier(key: string, tier: Tier): Promise<boolean> {
-    const result = await this.pool.query(`UPDATE api_keys SET tier = $1 WHERE key = $2`, [tier, key]);
+    const hashed = apiKeyLookupId(key);
+    let result = await this.pool.query(`UPDATE api_keys SET tier = $1 WHERE key = $2`, [tier, hashed]);
+    if (result.rowCount === 0 && key !== hashed) {
+      result = await this.pool.query(`UPDATE api_keys SET tier = $1 WHERE key = $2`, [tier, key]);
+    }
     return result.rowCount > 0;
+  }
+
+  async setApiKeyUsageCount(key: string, count: number): Promise<boolean> {
+    const hashed = apiKeyLookupId(key);
+    let result = await this.pool.query(`UPDATE api_keys SET usage_count = $1 WHERE key = $2`, [count, hashed]);
+    if (result.rowCount === 0 && key !== hashed) {
+      result = await this.pool.query(`UPDATE api_keys SET usage_count = $1 WHERE key = $2`, [count, key]);
+    }
+    return result.rowCount > 0;
+  }
+
+  async rekeyAttestationUsage(oldKey: string, newKey: string): Promise<void> {
+    const from = apiKeyLookupId(oldKey);
+    const to = apiKeyLookupId(newKey);
+    await this.pool.query(
+      `UPDATE attestation_usage SET api_key = $1 WHERE api_key = $2 OR api_key = $3`,
+      [to, from, oldKey]
+    );
   }
 
   async registerWebhook(url: string, attestationId: string | null, secret?: string): Promise<Webhook> {
@@ -505,7 +663,7 @@ class PostgresStore implements Store {
   async getAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
     const result = await this.pool.query(
       `SELECT usage_count FROM attestation_usage WHERE api_key = $1 AND month_key = $2`,
-      [apiKey, periodKey]
+      [apiKeyLookupId(apiKey), periodKey]
     );
     return result.rows[0]?.usage_count || 0;
   }
@@ -517,7 +675,7 @@ class PostgresStore implements Store {
        ON CONFLICT (api_key, month_key)
        DO UPDATE SET usage_count = attestation_usage.usage_count + 1
        RETURNING usage_count`,
-      [apiKey, periodKey]
+      [apiKeyLookupId(apiKey), periodKey]
     );
     return result.rows[0].usage_count;
   }

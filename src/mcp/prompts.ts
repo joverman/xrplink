@@ -75,7 +75,7 @@ export function getPromptContent(name: string, args?: Record<string, string>): s
         "# XRPLink Administration",
         "",
         "## API Keys",
-        "- Create: POST /api/v1/admin/keys (requires pro-tier key)",
+        "- Create: POST /api/v1/admin/keys (requires ADMIN_API_KEY as X-Admin-Key; customer keys never pass)",
         "- Tiers: free (10/min), paid (100/min), pro (unlimited)",
         "",
         "## Webhooks",

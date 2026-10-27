@@ -20,13 +20,13 @@ const catalog: Record<string, ErrorEntry> = {
   MISSING_API_KEY: {
     message: "X-API-Key header is required for this endpoint",
     suggestedAction:
-      "Pass an 'X-API-Key' header with a valid API key. Generate a new key via the 'create_api_key' tool (requires an existing pro-tier key).",
+      "Pass an 'X-API-Key' header with a valid API key. Sign in at /dashboard to view a masked key or regenerate it.",
     docsUrl: "xrplink://docs/config",
   },
   INVALID_API_KEY: {
     message: "API key is not valid or has been deactivated",
     suggestedAction:
-      "Check that the API key is correct and active. Generate a new key via the 'create_api_key' tool with an existing pro-tier key, or contact your administrator.",
+      "Check that the API key is correct and active. Sign in at /dashboard to regenerate your key if it was lost or rotated.",
     docsUrl: "xrplink://docs/config",
   },
   RATE_LIMITED: {
@@ -75,7 +75,7 @@ const catalog: Record<string, ErrorEntry> = {
   FORBIDDEN: {
     message: "You do not have permission to perform this action",
     suggestedAction:
-      "This operation requires a pro-tier API key. Generate one via the 'create_api_key' tool or contact your administrator.",
+      "This operation requires the server ADMIN_API_KEY sent as an X-Admin-Key header. Customer API keys of any tier are not accepted.",
     docsUrl: "xrplink://docs/tools",
   },
   MISSING_URL: {

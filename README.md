@@ -77,6 +77,10 @@ Live on Flare mainnet. End-to-end pipeline validated: XRP tx â†’ verifier API â†
 | `GET` | `/billing/portal` | Bearer token | Manage billing |
 | `GET` | `/mcp/resources` | Public | List MCP resources |
 | `GET` | `/mcp/prompts` | Public | List MCP prompts |
+| `POST` | `/api/v1/keys/rotate` | Session cookie | Regenerate the signed-in user's API key |
+| `POST` | `/api/v1/dashboard/verify` | Session cookie | Attest from the dashboard without pasting a key |
+| `GET` | `/api/v1/dashboard/status/:id` | Session | Poll a dashboard attestation the user owns |
+| `GET/PUT/POST/DELETE` | `/api/v1/admin/*` | `X-Admin-Key` | Operator-only (disabled if `ADMIN_API_KEY` is unset) |
 
 ## MCP Tools
 
