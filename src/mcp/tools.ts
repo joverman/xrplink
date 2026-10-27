@@ -124,7 +124,12 @@ export async function handleVerifyXrpPayment(args: Record<string, unknown>) {
     code === "MISSING_API_KEY" || code === "INVALID_API_KEY"
       ? `API key required. ${rawMessage}`
       : rawMessage;
-  return toolError(code ? `${message}\n\nCode: ${code}` : message);
+  const extras: string[] = [];
+  if (code) extras.push(`Code: ${code}`);
+  if (result.body.limit !== undefined) extras.push(`Limit: ${result.body.limit}`);
+  if (result.body.used !== undefined) extras.push(`Used: ${result.body.used}`);
+  if (result.body.resetDate) extras.push(`Reset: ${result.body.resetDate}`);
+  return toolError(extras.length ? `${message}\n\n${extras.join("\n")}` : message);
 }
 
 export async function handleGetAttestationStatus(args: Record<string, unknown>) {
