@@ -143,9 +143,12 @@ Users in `past_due` status retain their tier during Stripe's automatic retry per
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `ADMIN_API_KEY` | Operator secret for `/api/v1/admin/*`, sent as `X-Admin-Key`. Customer API keys of any tier (including Pro) never grant admin. Unset disables admin routes (404). Generate with `openssl rand -hex 32`. | unset (admin disabled) |
 | `DATABASE_URL` | Postgres connection string (Neon) | JSON file storage |
 | `WEBHOOK_SIGNING_SECRET` | Secret for signing outbound webhooks | (none - webhooks unsigned) |
 | `RESEND_API_KEY` | Resend API key for emails | (emails disabled) |
+
+API keys are stored as SHA-256 hashes. List endpoints return only a masked prefix and last 4. A logged-in user can regenerate their own key from the dashboard (`POST /api/v1/keys/rotate`, session cookie + same-origin). The dashboard Verify box attests via `POST /api/v1/dashboard/verify` using the session, not a key pasted into the browser.
 
 ### Application Configuration
 

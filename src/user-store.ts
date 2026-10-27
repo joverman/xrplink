@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkS
 import { dirname, join } from "path";
 import { v4 as uuid } from "uuid";
 import { Tier } from "./types.js";
+import { apiKeyLookupId, hashApiKey, isPlaintextApiKey } from "./api-keys.js";
 
 const DATA_DIR = process.env.DATA_DIR || "data";
 const USERS_PATH = join(DATA_DIR, "users.json");
@@ -22,6 +23,8 @@ export interface StoredUser {
   billingPeriodStart?: number;
   /** Stripe billing period end (Unix timestamp in seconds) */
   billingPeriodEnd?: number;
+  /** txHashes this user attested or verified from the dashboard (newest last). */
+  receiptTxHashes?: string[];
 }
 
 interface PersistedData {
@@ -45,10 +48,24 @@ class UserStore {
         : {};
       const users = raw.users || raw;
       const emailIndex: Record<string, string> = {};
+      let hashedIds = false;
       for (const [id, u] of Object.entries(users)) {
-        emailIndex[(u as StoredUser).email.toLowerCase()] = id;
+        const user = u as StoredUser;
+        emailIndex[user.email.toLowerCase()] = id;
+        if (Array.isArray(user.apiKeyIds)) {
+          const nextIds = user.apiKeyIds.map((k) => (isPlaintextApiKey(k) ? hashApiKey(k) : k));
+          if (nextIds.some((k, i) => k !== user.apiKeyIds[i])) {
+            user.apiKeyIds = nextIds;
+            hashedIds = true;
+          }
+        }
       }
-      return { users, emailIndex };
+      const loaded = { users, emailIndex };
+      if (hashedIds) {
+        this.data = loaded;
+        this.persist();
+      }
+      return loaded;
     } catch {
       return empty;
     }
@@ -90,6 +107,7 @@ class UserStore {
       tier: "free",
       subscriptionStatus: "none",
       createdAt: new Date().toISOString(),
+      receiptTxHashes: [],
     };
     this.data.users[id] = user;
     this.data.emailIndex[email.toLowerCase()] = id;
@@ -119,10 +137,22 @@ class UserStore {
     this.persist();
   }
 
-  /** Find user who owns a specific API key */
+  addReceipt(userId: string, txHash: string): void {
+    const user = this.data.users[userId];
+    if (!user) return;
+    const hash = txHash.replace(/^0x/i, "").toUpperCase();
+    const existing = user.receiptTxHashes || [];
+    const next = existing.filter((h) => h !== hash);
+    next.push(hash);
+    this.data.users[userId] = { ...user, receiptTxHashes: next.slice(-100) };
+    this.persist();
+  }
+
+  /** Find user who owns a specific API key (plaintext secret or stored hash). */
   findByApiKey(apiKey: string): StoredUser | undefined {
+    const hashed = apiKeyLookupId(apiKey);
     for (const user of Object.values(this.data.users)) {
-      if (user.apiKeyIds.includes(apiKey)) return user;
+      if (user.apiKeyIds.includes(apiKey) || user.apiKeyIds.includes(hashed)) return user;
     }
     return undefined;
   }

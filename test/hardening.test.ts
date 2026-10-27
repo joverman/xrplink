@@ -123,6 +123,19 @@ describe("Environment Validation", () => {
     assert.ok(result.warnings.some(w => w.includes("SESSION_SECRET")));
   });
 
+  it("should warn when ADMIN_API_KEY is unset", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
+    delete process.env.ADMIN_API_KEY;
+
+    const { validateEnv } = await import("../src/env-validation.js");
+    const result = validateEnv();
+
+    assert.equal(result.valid, true);
+    assert.ok(result.warnings.some((w) => w.includes("ADMIN_API_KEY")));
+    assert.ok(result.warnings.some((w) => w.includes("X-Admin-Key")));
+  });
+
   // Regression test for production incident: string "undefined" was written to
   // process.env when assigning undefined, which then failed Ethereum address validation
   it("should treat string 'undefined' as unset (regression: Fly v29 crash)", async () => {

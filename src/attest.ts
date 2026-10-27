@@ -255,6 +255,13 @@ function mapSubmitError(err: unknown, message: string, x402InvoiceId?: string): 
   };
 }
 
+function recordReceiptForCaller(opts: { apiKeyHeader?: string; apiKeyRecord?: ApiKey }, txHash: string) {
+  const presented = opts.apiKeyHeader || opts.apiKeyRecord?.key;
+  if (!presented) return;
+  const owner = userStore.findByApiKey(presented);
+  if (owner) userStore.addReceipt(owner.id, txHash);
+}
+
 export async function attestXrpPayment(opts: {
   txHash: string;
   apiKeyHeader?: string;
@@ -263,7 +270,7 @@ export async function attestXrpPayment(opts: {
   paymentSignature?: string;
 }): Promise<AttestResult> {
   const { txHash, paymentSignature } = opts;
-  const apiKeyHeader = opts.apiKeyRecord?.key || opts.apiKeyHeader;
+  const apiKeyHeader = opts.apiKeyHeader || opts.apiKeyRecord?.key;
 
   if (!txHash || typeof txHash !== "string") {
     return { kind: "error", httpStatus: 400, body: formatError("MISSING_TX_HASH", undefined, "txHash is required") };
@@ -283,6 +290,7 @@ export async function attestXrpPayment(opts: {
       status: cached.status,
     };
     if (cached.status === "verified") body.cached = true;
+    recordReceiptForCaller(opts, cleanHash);
     return { kind: "ok", httpStatus: 200, body };
   }
 
@@ -292,6 +300,7 @@ export async function attestXrpPayment(opts: {
       if (await check(cleanHash)) {
         const record = await store.createAttestation(cleanHash);
         await store.updateAttestation(record.id, { status: "verified" });
+        recordReceiptForCaller(opts, cleanHash);
         return {
           kind: "ok",
           httpStatus: 200,
@@ -387,6 +396,13 @@ export async function attestXrpPayment(opts: {
 
   if (result.kind === "ok" && settlement) {
     result.paymentResponseHeader = encodePaymentResponse(settlement);
+  }
+
+  if (result.kind === "ok") {
+    const owner =
+      (apiKey && userStore.findByApiKey(apiKey.key)) ||
+      (apiKeyHeader ? userStore.findByApiKey(apiKeyHeader) : undefined);
+    if (owner) userStore.addReceipt(owner.id, cleanHash);
   }
 
   return result;
