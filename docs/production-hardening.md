@@ -132,7 +132,7 @@ Users in `past_due` status retain their tier during Stripe's automatic retry per
 | `PORT` | HTTP port | `3000` |
 | `HOST` | Bind address | `0.0.0.0` |
 | `NODE_ENV` | Environment | `development` |
-| `DATA_DIR` | JSON storage directory | `data` |
+| `DATA_DIR` | JSON storage directory (must be writable; users, API keys, attestations) | `data` |
 | `DOMAIN` | Base URL for callbacks | `https://xrp-link.com` |
 | `TRUST_PROXY` | Trust proxy headers (see below) | `loopback,linklocal,uniquelocal` |
 
@@ -259,6 +259,10 @@ volumes:
 ```
 
 For production, consider using PostgreSQL instead (`DATABASE_URL`).
+
+Login sessions are JWTs in an httpOnly `xrplink_session` cookie (30 days, rolling, SameSite=Lax). They are not stored on the server, so they survive a container restart as long as `SESSION_SECRET` stays the same and `DATA_DIR` (which holds `users.json`) is on a writable volume. No new env var is required.
+
+If the container root filesystem is read-only, keep `DATA_DIR=/app/data` mounted read-write. User accounts used to be written to a relative `data/` path that could miss that volume.
 
 ## Fly.io Configuration
 

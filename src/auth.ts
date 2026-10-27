@@ -3,8 +3,12 @@ import jwt from "jsonwebtoken";
 import { userStore, StoredUser } from "./user-store.js";
 import { store } from "./store.js";
 import { sendWelcomeEmail, sendPasswordResetEmail } from "./email.js";
+import { SESSION_TTL } from "./session.js";
 
-const SESSION_SECRET = process.env.SESSION_SECRET || "dev-secret-change-in-prod";
+function sessionSecret(): string {
+  return process.env.SESSION_SECRET || "dev-secret-change-in-prod";
+}
+
 const SALT_ROUNDS = 10;
 
 export interface AuthResult {
@@ -28,7 +32,7 @@ export async function signup(email: string, password: string): Promise<AuthResul
   const apiKey = await store.createApiKey(`User: ${email}`, "free");
   userStore.update(user.id, { apiKeyIds: [apiKey.key] });
 
-  const token = jwt.sign({ userId: user.id, email: user.email }, SESSION_SECRET, { expiresIn: "7d" });
+  const token = issueSessionToken(user);
 
   sendWelcomeEmail(email, apiKey.key).catch(() => {});
 
@@ -45,13 +49,17 @@ export function login(email: string, password: string): AuthResult {
     return { ok: false, error: "Invalid email or password" };
   }
 
-  const token = jwt.sign({ userId: user.id, email: user.email }, SESSION_SECRET, { expiresIn: "7d" });
+  const token = issueSessionToken(user);
   return { ok: true, user, token, apiKey: user.apiKeyIds[0] || "" };
+}
+
+export function issueSessionToken(user: StoredUser): string {
+  return jwt.sign({ userId: user.id, email: user.email }, sessionSecret(), { expiresIn: SESSION_TTL });
 }
 
 export function verifyToken(token: string): { userId: string; email: string } | null {
   try {
-    const payload = jwt.verify(token, SESSION_SECRET) as { userId: string; email: string };
+    const payload = jwt.verify(token, sessionSecret()) as { userId: string; email: string };
     return payload;
   } catch {
     return null;
@@ -67,7 +75,7 @@ export function getUserFromToken(token: string): StoredUser | null {
 export function generateResetToken(email: string): string | null {
   const user = userStore.findByEmail(email);
   if (!user) return null;
-  const token = jwt.sign({ userId: user.id, purpose: "reset" }, SESSION_SECRET, { expiresIn: "1h" });
+  const token = jwt.sign({ userId: user.id, purpose: "reset" }, sessionSecret(), { expiresIn: "1h" });
   sendPasswordResetEmail(email, token).catch(() => {});
   return token;
 }

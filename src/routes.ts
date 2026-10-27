@@ -3,6 +3,8 @@ import express from "express";
 import { store } from "./store.js";
 import { config, activeNetwork } from "./config.js";
 import { requireApiKey, requireAuth } from "./middleware.js";
+import { getRequestToken, setSessionCookie, clearSessionCookie } from "./session.js";
+import { getUserFromToken, issueSessionToken } from "./auth.js";
 import { whiteLabel } from "./white-label.js";
 import { formatError } from "./mcp/errors.js";
 import { getPromptDefs, getPromptContent } from "./mcp/prompts.js";
@@ -20,6 +22,40 @@ function isHexTxHash(v: string): boolean {
   return /^[0-9A-Fa-f]{64}$/.test(v);
 }
 
+function publicNavHtml(): string {
+  return `<nav>
+  <a href="/" class="logo">XRPL<span>ink</span></a>
+  <div class="nav-links">
+    <a href="/">Home</a>
+    <a href="/docs">API Docs</a>
+    <a href="/#pricing">Pricing</a>
+    <a href="/contact">Contact</a>
+  </div>
+  <span id="authNav"></span>
+</nav>
+<script src="/session-nav.js" defer></script>`;
+}
+
+const PUBLIC_NAV_CSS = `
+nav{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:2.5rem;flex-wrap:wrap}
+nav .logo{font-weight:700;font-size:1.25rem;color:#f1f5f9;text-decoration:none}
+nav .logo span{color:#818cf8}
+nav .nav-links{display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap}
+nav .nav-links a,#authNav a{text-decoration:none;color:#94a3b8;font-size:0.85rem;font-weight:500}
+nav .nav-links a:hover,#authNav a:hover{color:#e2e8f0}
+#authNav{display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap}
+#authNav .auth-email{color:#94a3b8;font-size:0.8rem}
+.btn{display:inline-block;padding:0.6rem 1.5rem;border-radius:8px;font-weight:600;font-size:0.9rem;text-decoration:none;cursor:pointer;border:none}
+.btn-primary{background:#818cf8;color:#0f172a}
+#authNav .btn{padding:0.45rem 1rem;font-size:0.8rem;width:auto;display:inline-block}
+#authNav .auth-signup{color:#0f172a}
+`;
+
+function requestUser(req: Request) {
+  const token = getRequestToken(req);
+  return token ? getUserFromToken(token) : null;
+}
+
 // --- Auth endpoints ---
 
 router.post("/auth/signup", async (req: Request, res: Response) => {
@@ -28,7 +64,6 @@ router.post("/auth/signup", async (req: Request, res: Response) => {
   if (!result.ok) {
     return res.status(400).json(formatError("AUTH_FAILED", { message: result.error || "Signup failed" }));
   }
-  const { setSessionCookie } = await import("./session.js");
   setSessionCookie(res, result.token!);
   return res.status(201).json({ token: result.token, apiKey: result.apiKey });
 });
@@ -39,16 +74,20 @@ router.post("/auth/login", async (req: Request, res: Response) => {
   if (!result.ok) {
     return res.status(401).json(formatError("AUTH_FAILED", { message: result.error || "Login failed" }));
   }
-  const { setSessionCookie } = await import("./session.js");
   setSessionCookie(res, result.token!);
   return res.json({ token: result.token, apiKey: result.apiKey });
 });
 
 router.post("/auth/logout", (_req: Request, res: Response) => {
-  import("./session.js").then(({ clearSessionCookie }) => {
-    clearSessionCookie(res);
-    res.json({ ok: true });
-  });
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+router.get("/auth/session", (req: Request, res: Response) => {
+  const user = requestUser(req);
+  if (!user) return res.json({ user: null });
+  setSessionCookie(res, issueSessionToken(user));
+  return res.json({ user: { id: user.id, email: user.email, tier: user.tier } });
 });
 
 router.post("/auth/reset-password", async (req: Request, res: Response) => {
@@ -68,6 +107,7 @@ router.post("/auth/reset-password/confirm", async (req: Request, res: Response) 
 
 router.get("/me", requireAuth, async (req: Request, res: Response) => {
   const user = (req as any).user;
+  setSessionCookie(res, issueSessionToken(user));
   const allKeys = await store.listApiKeys();
   const keys = allKeys.filter((k) => user.apiKeyIds.includes(k.key));
   res.json({ user: { id: user.id, email: user.email, tier: user.tier, createdAt: user.createdAt, usageCount: keys.reduce((s, k) => s + k.usageCount, 0) }, apiKeys: keys });
@@ -126,7 +166,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .footer a{color:#818cf8;text-decoration:none}
 `;
 
-router.get("/signup", (_req: Request, res: Response) => {
+router.get("/signup", (req: Request, res: Response) => {
+  if (requestUser(req)) return res.redirect("/dashboard");
   res.type("html").send(`<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Sign Up — XRPLink</title><style>${AUTH_PAGE_STYLE}</style></head>
@@ -154,7 +195,7 @@ async function handleSignup(e) {
   btn.disabled = true;
   btn.textContent = 'Creating account...';
   try {
-    const r = await fetch('/auth/signup', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password}) });
+    const r = await fetch('/auth/signup', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password}) });
     const d = await r.json();
     if (!r.ok) { error.textContent = d.message || d.error || 'Signup failed'; error.style.display = 'block'; btn.disabled = false; btn.textContent = 'Create Account'; return; }
     localStorage.setItem('xrplink_token', d.token);
@@ -166,7 +207,8 @@ async function handleSignup(e) {
 </body></html>`);
 });
 
-router.get("/login", (_req: Request, res: Response) => {
+router.get("/login", (req: Request, res: Response) => {
+  if (requestUser(req)) return res.redirect("/dashboard");
   res.type("html").send(`<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Log In — XRPLink</title><style>${AUTH_PAGE_STYLE}</style></head>
@@ -194,7 +236,7 @@ async function handleLogin(e) {
   btn.disabled = true;
   btn.textContent = 'Logging in...';
   try {
-    const r = await fetch('/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password}) });
+    const r = await fetch('/auth/login', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password}) });
     const d = await r.json();
     if (!r.ok) { error.textContent = d.message || d.error || 'Login failed'; error.style.display = 'block'; btn.disabled = false; btn.textContent = 'Log In'; return; }
     localStorage.setItem('xrplink_token', d.token);
@@ -212,11 +254,7 @@ const DOCS_STYLE = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.7;padding:2rem 1rem}
 .wrap{max-width:820px;margin:0 auto}
-nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:2.5rem}
-nav .logo{font-weight:700;font-size:1.25rem;color:#f1f5f9;text-decoration:none}
-nav .logo span{color:#818cf8}
-nav a.back{color:#94a3b8;text-decoration:none;font-size:0.85rem}
-nav a.back:hover{color:#e2e8f0}
+${PUBLIC_NAV_CSS}
 h1{font-size:1.75rem;margin-bottom:0.5rem;color:#f1f5f9}
 .subtitle{color:#94a3b8;font-size:0.95rem;margin-bottom:2rem}
 h2{font-size:1.15rem;margin:2.5rem 0 0.75rem;color:#f1f5f9;padding-top:1rem;border-top:1px solid #1e293b}
@@ -251,10 +289,7 @@ router.get("/docs", (_req: Request, res: Response) => {
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>API Docs — XRPLink</title><style>${DOCS_STYLE}</style></head>
 <body>
 <div class="wrap">
-<nav>
-  <a href="/" class="logo">XRPL<span>ink</span></a>
-  <a href="/" class="back">← Back to home</a>
-</nav>
+${publicNavHtml()}
 
 <h1>XRPLink API Documentation</h1>
 <p class="subtitle">Generate cryptographically verified receipts for XRP payments on the Flare Network.</p>
@@ -418,13 +453,9 @@ npm run start:mcp</code></pre>
 const CONTACT_STYLE = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6;padding:2rem 1rem}
-.wrap{max-width:560px;margin:0 auto}
-nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem}
-nav .logo{font-weight:700;font-size:1.25rem;color:#f1f5f9;text-decoration:none}
-nav .logo span{color:#818cf8}
-nav a.back{color:#94a3b8;text-decoration:none;font-size:0.85rem}
-nav a.back:hover{color:#e2e8f0}
-.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2.5rem}
+.wrap{max-width:720px;margin:0 auto}
+${PUBLIC_NAV_CSS}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2.5rem;max-width:560px;margin:0 auto}
 .card h1{font-size:1.25rem;margin-bottom:0.25rem}
 .card .subtitle{color:#94a3b8;font-size:0.85rem;margin-bottom:1.5rem}
 .form-group{margin-bottom:1rem}
@@ -447,10 +478,7 @@ router.get("/contact", (_req: Request, res: Response) => {
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Contact — XRPLink</title><style>${CONTACT_STYLE}</style></head>
 <body>
 <div class="wrap">
-<nav>
-  <a href="/" class="logo">XRPL<span>ink</span></a>
-  <a href="/" class="back">← Back to home</a>
-</nav>
+${publicNavHtml()}
 <div class="card">
 <h1>Contact us</h1>
 <p class="subtitle">Questions, enterprise pricing, or partnerships — we'll get back to you.</p>
@@ -918,11 +946,15 @@ router.get("/dashboard", (req: Request, res: Response) => {
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6;padding:2rem 1rem}
 .wrap{max-width:800px;margin:0 auto}
-.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;flex-wrap:wrap;gap:0.75rem}
 .header .logo{font-weight:700;font-size:1.25rem;color:#f1f5f9;text-decoration:none}
 .header .logo span{color:#818cf8}
-.header .nav a{color:#94a3b8;text-decoration:none;font-size:0.85rem;margin-left:1.5rem}
-.header .nav a:hover{color:#e2e8f0}
+.header .nav{display:flex;align-items:center;flex-wrap:wrap;gap:0.5rem 1.25rem}
+.header .nav a,#authNav a{color:#94a3b8;text-decoration:none;font-size:0.85rem}
+.header .nav a:hover,#authNav a:hover{color:#e2e8f0}
+#authNav{display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap}
+#authNav .auth-email{color:#94a3b8;font-size:0.8rem}
+#authNav .btn{padding:0.45rem 1rem;font-size:0.8rem;width:auto;display:inline-block}
 .api-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem;position:relative}
 .api-card h2{font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:0.75rem}
 .api-key{display:flex;align-items:center;gap:0.5rem;background:#0f172a;padding:0.7rem 1rem;border-radius:8px;font-family:"SF Mono","Fira Code",monospace;font-size:0.8rem;color:#e2e8f0;overflow:hidden}
@@ -983,10 +1015,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
     <a href="/docs">API Docs</a>
     <a href="/#pricing">Pricing</a>
     <a href="/contact">Contact</a>
-    <span id="navEmail" style="color:#94a3b8;font-size:0.8rem;margin-left:1.5rem;display:none"></span>
-    <a href="#" id="navLogout" style="display:none">Log out</a>
+    <span id="authNav"></span>
   </div>
 </div>
+<script src="/session-nav.js" defer></script>
 
 <div id="loading" style="text-align:center;padding:3rem;color:#64748b">Loading...</div>
 
@@ -1043,9 +1075,6 @@ function renderDashboard(data) {
 
   document.getElementById('loading').style.display = 'none';
   document.getElementById('dashboardContent').style.display = 'block';
-  document.getElementById('navLogout').style.display = 'inline';
-  const navEmail = document.getElementById('navEmail');
-  if (navEmail) { navEmail.textContent = user.email; navEmail.style.display = 'inline'; }
 
   document.getElementById('dashboardContent').innerHTML = \`
     <div class="api-card">
@@ -1178,6 +1207,7 @@ async function subscribe(tier) {
     if (token) headers['Authorization'] = 'Bearer ' + token;
     const r = await fetch('/billing/subscribe', {
       method: 'POST',
+      credentials: 'include',
       headers,
       body: JSON.stringify({ tier })
     });
@@ -1188,14 +1218,6 @@ async function subscribe(tier) {
     alert('Could not start subscription.');
   }
 }
-
-document.getElementById('navLogout').addEventListener('click', async (e) => {
-  e.preventDefault();
-  try { await fetch('/auth/logout', { method: 'POST' }); } catch(err) {}
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(API_KEY_KEY);
-  window.location.href = '/';
-});
 
 loadDashboard();
 </script>
