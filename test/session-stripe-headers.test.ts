@@ -131,7 +131,7 @@ describe("Session revocation and reset tokens", () => {
     const created = await signup(`sv-${Date.now()}@example.com`);
     const user = userStore.findById(created.userId)!;
     assert.equal(user.sessionVersion, 1);
-    const payload = jwt.verify(created.token, SESSION_SECRET) as { sv?: number; purpose?: string };
+    const payload = jwt.verify(created.token, process.env.SESSION_SECRET!) as { sv?: number; purpose?: string };
     assert.equal(payload.sv, 1);
     assert.equal(payload.purpose, "session");
   });
@@ -139,7 +139,7 @@ describe("Session revocation and reset tokens", () => {
   it("accepts a legacy cookie without sv while sessionVersion is still 1", async () => {
     const created = await signup(`legacy-${Date.now()}@example.com`);
     const user = userStore.findById(created.userId)!;
-    const legacy = jwt.sign({ userId: user.id, email: user.email }, SESSION_SECRET, { expiresIn: "30d" });
+    const legacy = jwt.sign({ userId: user.id, email: user.email }, process.env.SESSION_SECRET!, { expiresIn: "30d" });
     assert.ok(getUserFromToken(legacy));
     const me = await request(port, "GET", "/me", { headers: { Authorization: `Bearer ${legacy}` } });
     assert.equal(me.status, 200);
@@ -148,7 +148,7 @@ describe("Session revocation and reset tokens", () => {
   it("rejects a legacy cookie after sessionVersion is bumped", async () => {
     const created = await signup(`legacy-bump-${Date.now()}@example.com`);
     const user = userStore.findById(created.userId)!;
-    const legacy = jwt.sign({ userId: user.id, email: user.email }, SESSION_SECRET, { expiresIn: "30d" });
+    const legacy = jwt.sign({ userId: user.id, email: user.email }, process.env.SESSION_SECRET!, { expiresIn: "30d" });
     userStore.bumpSessionVersion(user.id);
     assert.equal(getUserFromToken(legacy), null);
     const me = await request(port, "GET", "/me", { cookie: created.cookie });
@@ -187,7 +187,7 @@ describe("Session revocation and reset tokens", () => {
 
     const resetJwt = jwt.sign(
       { userId: created.userId, purpose: "reset" },
-      SESSION_SECRET,
+      process.env.SESSION_SECRET!,
       { expiresIn: "1h" }
     );
     assert.equal(resetPassword(resetJwt, "newpassword99").ok, false);
