@@ -3,8 +3,8 @@ import { dirname, join } from "path";
 import { v4 as uuid } from "uuid";
 import { Tier } from "./types.js";
 
-const DATA_DIR = "data";
-const USERS_PATH = `${DATA_DIR}/users.json`;
+const DATA_DIR = process.env.DATA_DIR || "data";
+const USERS_PATH = join(DATA_DIR, "users.json");
 
 export type SubscriptionStatus = "active" | "past_due" | "canceled" | "none";
 
