@@ -299,6 +299,12 @@ describe("Admin auth, key rotation, and dashboard verify", () => {
     assert.notEqual(rotated.body.key, created.plaintext);
     assert.ok(isMaskedKey(rotated.body.apiKey.key));
 
+    const newRecord = await store.getApiKey(rotated.body.key);
+    assert.ok(newRecord);
+    assert.equal(newRecord.tier, "paid");
+    assert.equal(newRecord.usageCount, 7);
+    assert.equal(await store.getAttestationUsage(rotated.body.key, periodKey), 1);
+
     const oldAuth = await request(port, "GET", "/api/v1/status/not-a-real-id", {
       headers: { "X-API-Key": created.plaintext },
     });
@@ -308,12 +314,6 @@ describe("Admin auth, key rotation, and dashboard verify", () => {
       headers: { "X-API-Key": rotated.body.key },
     });
     assert.equal(newAuth.status, 404);
-
-    const newRecord = await store.getApiKey(rotated.body.key);
-    assert.ok(newRecord);
-    assert.equal(newRecord.tier, "paid");
-    assert.equal(newRecord.usageCount, 7);
-    assert.equal(await store.getAttestationUsage(rotated.body.key, periodKey), 1);
   });
 
   it("requires a session cookie for rotation (Bearer is not enough)", async () => {
