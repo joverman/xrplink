@@ -72,6 +72,8 @@ describe("FDC XRPPayment lookback and mainnet defaults", () => {
     assert.equal(networkConfigs.flare.chainId, 14);
     assert.equal(networkConfigs.flare.verifierBaseUrl, "https://fdc-verifiers-mainnet.flare.network");
     assert.equal(networkConfigs.flare.fdcHub, "0xc25c749DC27Efb1864Cb3DADa8845B7687eB2d44");
+    assert.equal(networkConfigs.flare.fdcVerification, "0x9394c7A36b3Da8de1b4F27cdD0a554dA4Fa7132d");
+    assert.equal(networkConfigs.coston2.fdcVerification, "0x906507E0B64bcD494Db73bd0459d1C667e14B933");
     assert.equal(networkConfigs.coston2.sourceId, "testXRP");
     assert.equal(networkConfigs.coston2.verifierBaseUrl, "https://fdc-verifiers-testnet.flare.network");
   });
