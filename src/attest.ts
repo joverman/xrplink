@@ -169,7 +169,7 @@ async function submitToFdc(
     const { roundId } = await submit(abiEncoded);
     await store.updateAttestation(attestation.id, { roundId, status: "pending" });
 
-    if (x402InvoiceId) markPaymentFdcOk(x402InvoiceId);
+    if (x402InvoiceId) await markPaymentFdcOk(x402InvoiceId);
 
     if (!fdcSubmitOverride) {
       pollForProof(attestation.id, roundId, abiEncoded).catch((err) => {
@@ -190,7 +190,7 @@ async function submitToFdc(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await store.updateAttestation(attestation.id, { status: "failed", error: message });
-    if (x402InvoiceId) markPaymentFdcFailed(x402InvoiceId);
+    if (x402InvoiceId) await markPaymentFdcFailed(x402InvoiceId);
     console.error(`Attestation ${attestation.id} failed:`, message);
     return mapSubmitError(err, message, x402InvoiceId);
   }

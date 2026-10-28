@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
-import { dirname, join } from "path";
+import { readFileSync, existsSync, mkdirSync } from "fs";
+import { join } from "path";
+import { atomicWriteJson, createMutex } from "./file-lock.js";
 import { v4 as uuid } from "uuid";
 import { Tier } from "./types.js";
 import { apiKeyLookupId, hashApiKey, isPlaintextApiKey, timingSafeEqualString } from "./api-keys.js";
@@ -43,6 +44,7 @@ interface PersistedData {
 
 class UserStore {
   private data: PersistedData;
+  private writeLock = createMutex();
 
   constructor() {
     this.data = this.load();
@@ -85,18 +87,12 @@ class UserStore {
   }
 
   private persist() {
-    const dir = dirname(USERS_PATH);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    const tempPath = join(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
-    try {
-      writeFileSync(tempPath, JSON.stringify(this.data.users, null, 2));
-      renameSync(tempPath, USERS_PATH);
-    } catch (err) {
-      try { unlinkSync(tempPath); } catch {}
-      throw err;
-    }
+    atomicWriteJson(USERS_PATH, this.data.users);
+  }
+
+  /** Serialize a mutate+persist so concurrent auth/billing updates cannot clobber users.json. */
+  async withWriteLock<T>(fn: () => T | Promise<T>): Promise<T> {
+    return this.writeLock(fn);
   }
 
   findByEmail(email: string): StoredUser | undefined {

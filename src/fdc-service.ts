@@ -1,13 +1,13 @@
-import { ethers } from "ethers";
+import { Contract, JsonRpcProvider, Wallet, parseEther } from "ethers";
 import { config, activeNetwork } from "./config.js";
 import { ProofResponse } from "./types.js";
 
 function getProvider() {
-  return new ethers.providers.JsonRpcProvider(activeNetwork.rpc);
+  return new JsonRpcProvider(activeNetwork.rpc);
 }
 
-function getWallet(provider: ethers.providers.JsonRpcProvider) {
-  return new ethers.Wallet(config.privateKey, provider);
+function getWallet(provider: JsonRpcProvider) {
+  return new Wallet(config.privateKey, provider);
 }
 
 function encodeAttestationType(type: string): string {
@@ -71,15 +71,17 @@ export async function submitRequest(abiEncodedRequest: string): Promise<{ roundI
   const wallet = getWallet(provider);
 
   const abi = ["function requestAttestation(bytes _data) external payable"];
-  const fdcHub = new ethers.Contract(activeNetwork.fdcHub, abi, wallet);
+  const fdcHub = new Contract(activeNetwork.fdcHub, abi, wallet);
 
-  const fee = ethers.utils.parseEther(config.submitFeeFlr);
+  const fee = parseEther(config.submitFeeFlr);
   const tx = await fdcHub.requestAttestation(abiEncodedRequest, { value: fee });
   const receipt = await tx.wait();
+  if (!receipt) throw new Error("FdcHub transaction was not mined");
   const block = await provider.getBlock(receipt.blockNumber);
+  if (!block) throw new Error("FdcHub block not found");
 
   const roundId = Math.floor(
-    (block.timestamp - activeNetwork.firstVotingRoundStart) / 90
+    (Number(block.timestamp) - activeNetwork.firstVotingRoundStart) / 90
   );
 
   return { roundId, txHash: tx.hash, blockNumber: receipt.blockNumber };
@@ -121,7 +123,7 @@ export function buildProofStruct(proofData: ProofResponse) {
     return typeof v === "string" ? Number(v) : v;
   }
   function toBN(v: string | number) {
-    return ethers.BigNumber.from(v);
+    return BigInt(v);
   }
 
   return {
@@ -169,12 +171,13 @@ export async function verifyProofOnChain(proofData: ProofResponse, contractAddre
 
   const provider = getProvider();
   const wallet = getWallet(provider);
-  const verifier = new ethers.Contract(contractAddress, artifact.abi, wallet);
+  const verifier = new Contract(contractAddress, artifact.abi, wallet);
 
   const proofStruct = buildProofStruct(proofData);
   const tx = await verifier.processPaymentProof(proofStruct);
   const receipt = await tx.wait();
-  return receipt.transactionHash;
+  if (!receipt) throw new Error("PaymentVerifier transaction was not mined");
+  return receipt.hash;
 }
 
 /**
@@ -190,7 +193,7 @@ export async function isAlreadyVerified(txHash: string): Promise<boolean> {
   );
 
   const provider = getProvider();
-  const verifier = new ethers.Contract(contractAddress, artifact.abi, provider);
+  const verifier = new Contract(contractAddress, artifact.abi, provider);
 
   try {
     const txId = "0x" + txHash;
@@ -204,5 +207,5 @@ export async function isAlreadyVerified(txHash: string): Promise<boolean> {
  * Compute the wallet address from the configured private key.
  */
 export function getProofOwner(): string {
-  return new ethers.Wallet(config.privateKey).address;
+  return new Wallet(config.privateKey).address;
 }

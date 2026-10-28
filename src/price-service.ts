@@ -9,7 +9,7 @@
  * once older than 300s (fail closed — never quote a stale price).
  */
 
-import { ethers } from "ethers";
+import { Contract, JsonRpcProvider, formatEther, formatUnits } from "ethers";
 import { activeNetwork, config } from "./config.js";
 
 const CONTRACT_REGISTRY = "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019";
@@ -223,9 +223,9 @@ function trimDecimal(s: string): string {
   return s.replace(/\.?0+$/, "") || "0";
 }
 
-function decodeFtsoValue(value: ethers.BigNumber, decimals: number): number {
-  const dec = Math.abs(decimals);
-  return parseFloat(ethers.utils.formatUnits(value, dec));
+function decodeFtsoValue(value: bigint | string | number, decimals: bigint | number): number {
+  const dec = Math.abs(Number(decimals));
+  return parseFloat(formatUnits(value, dec));
 }
 
 function cacheIsFresh(timestamp: number, now: number): boolean {
@@ -244,10 +244,10 @@ async function fetchPricesFromFtso(): Promise<{ flrUsd: number; xrpUsd: number }
     return testOverride;
   }
 
-  const provider = new ethers.providers.JsonRpcProvider(activeNetwork.rpc);
-  const registry = new ethers.Contract(CONTRACT_REGISTRY, REGISTRY_ABI, provider);
+  const provider = new JsonRpcProvider(activeNetwork.rpc);
+  const registry = new Contract(CONTRACT_REGISTRY, REGISTRY_ABI, provider);
   const ftsoAddr: string = await registry.getContractAddressByName("FtsoV2");
-  const ftso = new ethers.Contract(ftsoAddr, FTSO_V2_ABI, provider);
+  const ftso = new Contract(ftsoAddr, FTSO_V2_ABI, provider);
 
   const [flrRaw, xrpRaw] = await Promise.all([
     ftso.getFeedById(FEED_ID_FLR_USD),
@@ -365,21 +365,21 @@ async function fetchOnChainFeeFlr(): Promise<number> {
     throw new Error("On-chain FDC fee skipped during price-service tests");
   }
 
-  const provider = new ethers.providers.JsonRpcProvider(activeNetwork.rpc);
-  const registry = new ethers.Contract(CONTRACT_REGISTRY, REGISTRY_ABI, provider);
+  const provider = new JsonRpcProvider(activeNetwork.rpc);
+  const registry = new Contract(CONTRACT_REGISTRY, REGISTRY_ABI, provider);
 
   let feeCfgAddr: string;
   try {
     feeCfgAddr = await registry.getContractAddressByName("FdcRequestFeeConfigurations");
   } catch {
-    const fdcHub = new ethers.Contract(activeNetwork.fdcHub, FDC_HUB_FEE_ABI, provider);
+    const fdcHub = new Contract(activeNetwork.fdcHub, FDC_HUB_FEE_ABI, provider);
     feeCfgAddr = await fdcHub.fdcRequestFeeConfigurations();
   }
 
-  const feeCfg = new ethers.Contract(feeCfgAddr, FEE_CONFIG_ABI, provider);
+  const feeCfg = new Contract(feeCfgAddr, FEE_CONFIG_ABI, provider);
   const data = "0x" + encodeBytes32Ascii("XRPPayment") + encodeBytes32Ascii(activeNetwork.sourceId);
-  const feeWei: ethers.BigNumber = await feeCfg.getRequestFee(data);
-  const flr = parseFloat(ethers.utils.formatEther(feeWei));
+  const feeWei: bigint = await feeCfg.getRequestFee(data);
+  const flr = parseFloat(formatEther(feeWei));
   // Dust (e.g. 1 wei) means the type/source is unconfigured; do not quote from it.
   if (!(flr >= 0.01)) {
     throw new Error(`On-chain FDC fee implausible (${flr} FLR / ${feeWei.toString()} wei)`);

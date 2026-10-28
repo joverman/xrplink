@@ -27,7 +27,10 @@ const prompts: PromptDef[] = [
   },
 ];
 
-export function getPromptDefs() {
+export function getPromptDefs(opts?: { includeAdmin?: boolean }) {
+  if (opts?.includeAdmin === false) {
+    return prompts.filter((p) => p.name !== "admin_setup");
+  }
   return prompts;
 }
 

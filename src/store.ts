@@ -1,6 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
-import { join, dirname } from "path";
-import { tmpdir } from "os";
+import { readFileSync, existsSync, mkdirSync } from "fs";
+import { join } from "path";
 import { v4 as uuid } from "uuid";
 import { Attestation, AttestationStatus, ApiKey, Tier, Webhook } from "./types.js";
 import {
@@ -10,6 +9,7 @@ import {
   hashApiKey,
   isPlaintextApiKey,
 } from "./api-keys.js";
+import { atomicWriteFileSync, createMutex } from "./file-lock.js";
 
 const DATA_DIR = process.env.DATA_DIR || "data";
 const ATTESTATIONS_PATH = join(DATA_DIR, "attestations.json");
@@ -110,27 +110,10 @@ function migrateJsonAttestationUsage(raw: Record<string, number>): Record<string
   return next;
 }
 
-function atomicWriteFileSync(path: string, data: string): void {
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const tempPath = join(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
-  try {
-    writeFileSync(tempPath, data);
-    renameSync(tempPath, path);
-  } catch (err) {
-    try {
-      unlinkSync(tempPath);
-    } catch {}
-    throw err;
-  }
-}
-
 class JsonFileStore implements Store {
   private data: PersistedData;
   private lastError?: string;
-  private usageLocks = new Map<string, Promise<void>>();
+  private writeLock = createMutex();
 
   constructor() {
     this.data = this.load();
@@ -198,21 +181,23 @@ class JsonFileStore implements Store {
   }
 
   async createAttestation(txHash: string, ownerKeyId?: string): Promise<Attestation> {
-    const existing = this.data.txHashIndex[txHash.toLowerCase()];
-    if (existing) return this.data.attestations[existing];
+    return this.writeLock(() => {
+      const existing = this.data.txHashIndex[txHash.toLowerCase()];
+      if (existing) return this.data.attestations[existing];
 
-    const id = uuid();
-    const now = new Date().toISOString();
-    const record: Attestation = {
-      id, txHash, status: "pending", roundId: null,
-      abiEncodedRequest: null, proof: null, verifiedTxHash: null, error: null,
-      createdAt: now, updatedAt: now,
-      ownerKeyId: ownerKeyId || null,
-    };
-    this.data.attestations[id] = record;
-    this.data.txHashIndex[txHash.toLowerCase()] = id;
-    this.syncPersist();
-    return record;
+      const id = uuid();
+      const now = new Date().toISOString();
+      const record: Attestation = {
+        id, txHash, status: "pending", roundId: null,
+        abiEncodedRequest: null, proof: null, verifiedTxHash: null, error: null,
+        createdAt: now, updatedAt: now,
+        ownerKeyId: ownerKeyId || null,
+      };
+      this.data.attestations[id] = record;
+      this.data.txHashIndex[txHash.toLowerCase()] = id;
+      this.syncPersist();
+      return record;
+    });
   }
 
   async getAttestation(id: string): Promise<Attestation | undefined> {
@@ -226,12 +211,14 @@ class JsonFileStore implements Store {
   }
 
   async updateAttestation(id: string, updates: Partial<Attestation>): Promise<Attestation | undefined> {
-    const record = this.data.attestations[id];
-    if (!record) return undefined;
-    const updated = { ...record, ...updates, updatedAt: new Date().toISOString() };
-    this.data.attestations[id] = updated;
-    this.syncPersist();
-    return updated;
+    return this.writeLock(() => {
+      const record = this.data.attestations[id];
+      if (!record) return undefined;
+      const updated = { ...record, ...updates, updatedAt: new Date().toISOString() };
+      this.data.attestations[id] = updated;
+      this.syncPersist();
+      return updated;
+    });
   }
 
   async listAttestations(): Promise<Attestation[]> {
@@ -241,21 +228,23 @@ class JsonFileStore implements Store {
   }
 
   async createApiKey(name: string, tier: Tier = "free"): Promise<ApiKey> {
-    const plaintext = generateApiKeyPlaintext();
-    const id = hashApiKey(plaintext);
-    const display = apiKeyDisplayParts(plaintext);
-    const record: ApiKey = {
-      key: id,
-      name,
-      tier,
-      active: true,
-      usageCount: 0,
-      createdAt: new Date().toISOString(),
-      ...display,
-    };
-    this.data.apiKeys[id] = record;
-    this.syncPersist();
-    return { ...record, key: plaintext };
+    return this.writeLock(() => {
+      const plaintext = generateApiKeyPlaintext();
+      const id = hashApiKey(plaintext);
+      const display = apiKeyDisplayParts(plaintext);
+      const record: ApiKey = {
+        key: id,
+        name,
+        tier,
+        active: true,
+        usageCount: 0,
+        createdAt: new Date().toISOString(),
+        ...display,
+      };
+      this.data.apiKeys[id] = record;
+      this.syncPersist();
+      return { ...record, key: plaintext };
+    });
   }
 
   async getApiKey(key: string): Promise<ApiKey | undefined> {
@@ -270,74 +259,86 @@ class JsonFileStore implements Store {
   }
 
   async deleteApiKey(key: string): Promise<boolean> {
-    const hashed = apiKeyLookupId(key);
-    const id = this.data.apiKeys[hashed] ? hashed : this.data.apiKeys[key] ? key : "";
-    if (!id) return false;
-    delete this.data.apiKeys[id];
-    this.syncPersist();
-    return true;
+    return this.writeLock(() => {
+      const hashed = apiKeyLookupId(key);
+      const id = this.data.apiKeys[hashed] ? hashed : this.data.apiKeys[key] ? key : "";
+      if (!id) return false;
+      delete this.data.apiKeys[id];
+      this.syncPersist();
+      return true;
+    });
   }
 
   async incrementApiKeyUsage(key: string): Promise<void> {
-    const hashed = apiKeyLookupId(key);
-    const record = this.data.apiKeys[hashed] || this.data.apiKeys[key];
-    if (record) {
-      record.usageCount++;
-      this.syncPersist();
-    }
+    return this.writeLock(() => {
+      const hashed = apiKeyLookupId(key);
+      const record = this.data.apiKeys[hashed] || this.data.apiKeys[key];
+      if (record) {
+        record.usageCount++;
+        this.syncPersist();
+      }
+    });
   }
 
   async updateApiKeyTier(key: string, tier: Tier): Promise<boolean> {
-    const hashed = apiKeyLookupId(key);
-    const record = this.data.apiKeys[hashed] || this.data.apiKeys[key];
-    if (!record) return false;
-    record.tier = tier;
-    this.syncPersist();
-    return true;
+    return this.writeLock(() => {
+      const hashed = apiKeyLookupId(key);
+      const record = this.data.apiKeys[hashed] || this.data.apiKeys[key];
+      if (!record) return false;
+      record.tier = tier;
+      this.syncPersist();
+      return true;
+    });
   }
 
   async setApiKeyUsageCount(key: string, count: number): Promise<boolean> {
-    const hashed = apiKeyLookupId(key);
-    const record = this.data.apiKeys[hashed] || this.data.apiKeys[key];
-    if (!record) return false;
-    record.usageCount = count;
-    this.syncPersist();
-    return true;
+    return this.writeLock(() => {
+      const hashed = apiKeyLookupId(key);
+      const record = this.data.apiKeys[hashed] || this.data.apiKeys[key];
+      if (!record) return false;
+      record.usageCount = count;
+      this.syncPersist();
+      return true;
+    });
   }
 
   async rekeyAttestationUsage(oldKey: string, newKey: string): Promise<void> {
-    const from = apiKeyLookupId(oldKey);
-    const to = apiKeyLookupId(newKey);
-    const next: Record<string, number> = {};
-    for (const [usageKey, count] of Object.entries(this.data.attestationUsage)) {
-      const sep = usageKey.lastIndexOf(":");
-      const id = sep >= 0 ? usageKey.slice(0, sep) : usageKey;
-      const period = sep >= 0 ? usageKey.slice(sep + 1) : "";
-      const normalized = apiKeyLookupId(id);
-      if (normalized === from || id === oldKey) {
-        next[`${to}:${period}`] = (next[`${to}:${period}`] || 0) + count;
-      } else {
-        next[usageKey] = count;
+    return this.writeLock(() => {
+      const from = apiKeyLookupId(oldKey);
+      const to = apiKeyLookupId(newKey);
+      const next: Record<string, number> = {};
+      for (const [usageKey, count] of Object.entries(this.data.attestationUsage)) {
+        const sep = usageKey.lastIndexOf(":");
+        const id = sep >= 0 ? usageKey.slice(0, sep) : usageKey;
+        const period = sep >= 0 ? usageKey.slice(sep + 1) : "";
+        const normalized = apiKeyLookupId(id);
+        if (normalized === from || id === oldKey) {
+          next[`${to}:${period}`] = (next[`${to}:${period}`] || 0) + count;
+        } else {
+          next[usageKey] = count;
+        }
       }
-    }
-    this.data.attestationUsage = next;
-    this.syncPersist();
+      this.data.attestationUsage = next;
+      this.syncPersist();
+    });
   }
 
   async registerWebhook(url: string, attestationId: string, apiKeyId: string, secret?: string): Promise<Webhook> {
-    const id = uuid();
-    const hook: Webhook = {
-      id,
-      url,
-      attestationId,
-      apiKeyId: apiKeyLookupId(apiKeyId),
-      secret,
-      createdAt: new Date().toISOString(),
-      active: true,
-    };
-    this.data.webhooks[id] = hook;
-    this.syncPersist();
-    return hook;
+    return this.writeLock(() => {
+      const id = uuid();
+      const hook: Webhook = {
+        id,
+        url,
+        attestationId,
+        apiKeyId: apiKeyLookupId(apiKeyId),
+        secret,
+        createdAt: new Date().toISOString(),
+        active: true,
+      };
+      this.data.webhooks[id] = hook;
+      this.syncPersist();
+      return hook;
+    });
   }
 
   async countWebhooksForApiKey(apiKeyId: string): Promise<number> {
@@ -358,10 +359,12 @@ class JsonFileStore implements Store {
   }
 
   async removeWebhook(id: string): Promise<boolean> {
-    const exists = !!this.data.webhooks[id];
-    delete this.data.webhooks[id];
-    if (exists) this.syncPersist();
-    return exists;
+    return this.writeLock(() => {
+      const exists = !!this.data.webhooks[id];
+      delete this.data.webhooks[id];
+      if (exists) this.syncPersist();
+      return exists;
+    });
   }
 
   async getAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
@@ -371,7 +374,7 @@ class JsonFileStore implements Store {
 
   async incrementAttestationUsage(apiKey: string, periodKey: string): Promise<number> {
     const usageKey = `${apiKeyLookupId(apiKey)}:${periodKey}`;
-    return this.withUsageLock(usageKey, () => {
+    return this.writeLock(() => {
       const current = this.data.attestationUsage[usageKey] || 0;
       this.data.attestationUsage[usageKey] = current + 1;
       this.syncPersist();
@@ -385,7 +388,7 @@ class JsonFileStore implements Store {
     limit: number
   ): Promise<{ reserved: boolean; used: number }> {
     const usageKey = `${apiKeyLookupId(apiKey)}:${periodKey}`;
-    return this.withUsageLock(usageKey, () => {
+    return this.writeLock(() => {
       const current = this.data.attestationUsage[usageKey] || 0;
       if (limit <= 0 || current >= limit) {
         return { reserved: false, used: current };
@@ -398,29 +401,13 @@ class JsonFileStore implements Store {
 
   async releaseAttestationUsage(apiKey: string, periodKey: string): Promise<void> {
     const usageKey = `${apiKeyLookupId(apiKey)}:${periodKey}`;
-    return this.withUsageLock(usageKey, () => {
+    return this.writeLock(() => {
       const current = this.data.attestationUsage[usageKey] || 0;
       if (current > 0) {
         this.data.attestationUsage[usageKey] = current - 1;
         this.syncPersist();
       }
     });
-  }
-
-  private async withUsageLock<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
-    const prev = this.usageLocks.get(key) || Promise.resolve();
-    let release!: () => void;
-    const next = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.usageLocks.set(key, prev.then(() => next));
-    await prev;
-    try {
-      return await fn();
-    } finally {
-      release();
-      if (this.usageLocks.get(key) === next) this.usageLocks.delete(key);
-    }
   }
 
   getData(): PersistedData {

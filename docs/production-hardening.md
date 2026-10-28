@@ -27,7 +27,7 @@ Flare's `XRPPayment` type can only prove **native XRP Payments from the last 14 
 
 | Variable | Required to attest? | Where to get it |
 |----------|---------------------|-----------------|
-| `FLARE_NETWORK` | Yes (`flare`) | Set to `flare`. Default in code is `coston2` (testnet verifier + `testXRP`). |
+| `FLARE_NETWORK` | Yes (`flare`) when `NODE_ENV=production` | Set to `flare`. Default in code is `coston2` (testnet verifier + `testXRP`). Production refuses to start on a testnet. Staging should use `NODE_ENV=staging` (or `development`) if it needs Coston2. |
 | `VERIFIER_API_KEY` | Recommended | Flare's public key `00000000-0000-0000-0000-000000000000` is documented on the [Network Overview](https://dev.flare.network/network/overview) and [FAQs](https://dev.flare.network/support/faqs). It is accepted on the hosted mainnet verifier. For higher DA Layer rate limits, open an API Key Request issue as linked from the FAQ. |
 | `PRIVATE_KEY_FLARE` | Yes, for new attestations | Hex private key of a **Flare mainnet** (chain ID 14) wallet. Generate with `npm run wallet`. Fund it with enough FLR to pay FdcHub `requestAttestation` — default `SUBMIT_FEE_FLR` is `20` on flare. Without this, prepare may succeed and FdcHub submit will fail (`SUBMIT_FAILED`). Do not use a Coston2 faucet key here. |
 | `SUBMIT_FEE_FLR` | No | Optional override of the FdcHub fee in FLR. Default `20` when `FLARE_NETWORK=flare`. |
@@ -154,10 +154,11 @@ API keys are stored as SHA-256 hashes. List endpoints return only a masked prefi
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `FLARE_NETWORK` | Network: `coston2` or `flare` | `coston2` |
+| `FLARE_NETWORK` | Network: `coston2` or `flare`. Required `flare` when `NODE_ENV=production`. | `coston2` |
 | `PORT` | HTTP port | `3000` |
 | `HOST` | Bind address | `0.0.0.0` |
-| `NODE_ENV` | Environment | `development` |
+| `NODE_ENV` | `production` refuses testnets. Staging: `staging` or `development`. | `development` |
+| `MCP_API_KEY` | Optional stdio MCP API key. Unset stdio verify does not spend the Flare wallet without a key or x402. | unset |
 | `DATA_DIR` | JSON storage directory (must be writable; users, API keys, attestations) | `data` |
 | `DOMAIN` | Base URL for callbacks | `https://xrp-link.com` |
 | `TRUST_PROXY` | Trust proxy headers (see below) | `loopback,linklocal,uniquelocal` |
@@ -398,7 +399,19 @@ This allows safe development while self-hosting via Docker.
 
 ## Rollout Checklist (Self-Hosting)
 
+### Staging (`xrplink-staging`)
+
+There is no separate staging compose file in this repo. If staging runs the same image:
+
+- Do **not** set `NODE_ENV=production` while `FLARE_NETWORK=coston2` — boot will fail.
+- Use `NODE_ENV=staging` (or `development`) with `FLARE_NETWORK=coston2`.
+- Production already uses `NODE_ENV=production` and `FLARE_NETWORK=flare` (Docker Compose, Fly, smoke test). No env change is required for prod.
+
+`MCP_API_KEY` is optional. It is only for the local stdio MCP process (not HTTP `/mcp`).
+
 ### Docker Deployment
+
+The image is pinned (`node:22.23.4-alpine3.24@sha256:…`), runs as uid `1000` (`node`, same as `run.sh --user 1000:1000`), has a read-only-friendly `/app/data` volume, and health-checks `http://127.0.0.1:3000/health` (not `localhost`). Secrets come from runtime env, not the image. `.env` is in `.dockerignore`.
 
 1. **Set up secrets** in `.env`:
    ```bash

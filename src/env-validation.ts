@@ -75,6 +75,16 @@ export function validateEnv(): EnvValidationResult {
   // PRIVATE_KEY - required for submitting attestation requests to blockchain
   // Without this, receipt lookup still works but new attestations cannot be created.
   const network = process.env.FLARE_NETWORK || "coston2";
+  // NODE_ENV=production (prod Docker/compose) must use Flare mainnet.
+  // Staging/dev can keep coston2 by setting NODE_ENV=staging or development.
+  // FLY_APP_NAME alone does not trigger this — Fly staging can still use a testnet.
+  if (process.env.NODE_ENV === "production" && network !== "flare") {
+    errors.push(
+      `FLARE_NETWORK must be "flare" when NODE_ENV=production (got "${network}"). ` +
+        "Coston2/testnet is for development and staging only. " +
+        "Set NODE_ENV=staging (or development) to use a testnet, or set FLARE_NETWORK=flare for production."
+    );
+  }
   const privateKeyEnv = network === "flare" ? "PRIVATE_KEY_FLARE" : "PRIVATE_KEY_COSTON2";
   const privateKey = process.env[privateKeyEnv] || process.env.PRIVATE_KEY;
   if (!privateKey) {
@@ -192,6 +202,7 @@ export function printValidationResult(result: EnvValidationResult): void {
     }
     console.error("\nRequired environment variables for production:");
     console.error("  SESSION_SECRET         - Secure random string for JWT signing");
+    console.error("  FLARE_NETWORK          - Must be \"flare\" when NODE_ENV=production");
     console.error("\nOptional (receipt lookup works without these):");
     console.error("  VERIFIER_API_KEY       - Flare Data Connector API key (public key works)");
     console.error("  PRIVATE_KEY_FLARE      - Wallet private key (for new attestations)");

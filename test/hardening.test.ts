@@ -32,6 +32,7 @@ describe("Environment Validation", () => {
 
   it("should report error only for SESSION_SECRET in production", async () => {
     process.env.NODE_ENV = "production";
+    process.env.FLARE_NETWORK = "flare";
     delete process.env.SESSION_SECRET;
     delete process.env.VERIFIER_API_KEY;
     delete process.env.PRIVATE_KEY_FLARE;
@@ -52,6 +53,7 @@ describe("Environment Validation", () => {
 
   it("should accept Flare public API key (all-zeros UUID) in production", async () => {
     process.env.NODE_ENV = "production";
+    process.env.FLARE_NETWORK = "flare";
     process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
     process.env.VERIFIER_API_KEY = "00000000-0000-0000-0000-000000000000";
     
@@ -125,6 +127,7 @@ describe("Environment Validation", () => {
 
   it("should warn when ADMIN_API_KEY is unset", async () => {
     process.env.NODE_ENV = "production";
+    process.env.FLARE_NETWORK = "flare";
     process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
     delete process.env.ADMIN_API_KEY;
 
@@ -172,6 +175,28 @@ describe("Environment Validation", () => {
     const result = validateEnv();
     
     assert.equal(result.valid, true, `Expected valid=true but got errors: ${result.errors.join(", ")}`);
+  });
+
+  it("refuses NODE_ENV=production unless FLARE_NETWORK is flare", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
+    process.env.FLARE_NETWORK = "coston2";
+    const { validateEnv } = await import("../src/env-validation.js");
+    const result = validateEnv();
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((e) => e.includes("FLARE_NETWORK") && e.includes("flare")));
+  });
+
+  it("allows coston2 when NODE_ENV is staging", async () => {
+    process.env.NODE_ENV = "staging";
+    process.env.SESSION_SECRET = "valid-secret-32-chars-minimum!!!";
+    process.env.FLARE_NETWORK = "coston2";
+    delete process.env.FLY_APP_NAME;
+    delete process.env.FLY_REGION;
+    const { validateEnv } = await import("../src/env-validation.js");
+    const result = validateEnv();
+    assert.equal(result.valid, true, result.errors.join(", "));
+    assert.ok(!result.errors.some((e) => e.includes("FLARE_NETWORK")));
   });
 
   it("isEffectivelyUnset should detect undefined-like values", async () => {

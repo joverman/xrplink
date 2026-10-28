@@ -24,15 +24,15 @@ import { Request, Response } from "express";
 import { store } from "../store.js";
 import {
   tools,
+  handleVerifyXrpPayment,
   handleGetAttestationStatus,
   handleLookupByTx,
   handleGetServerInfo,
 } from "./tools.js";
 import { getResources, readResource } from "./resources.js";
 import { getPromptDefs, getPromptContent } from "./prompts.js";
-import { attestXrpPayment } from "../attest.js";
-import { getMcpContext, runMcpContext, McpRequestContext } from "./context.js";
-import { checkVerifyRateLimit, clientIp } from "../rate-limit.js";
+import { runMcpContext, McpRequestContext } from "./context.js";
+import { clientIp } from "../rate-limit.js";
 
 const SERVER_NAME = "xrplink-mcp";
 const SERVER_VERSION = "0.3.0";
@@ -41,79 +41,8 @@ function toolError(text: string) {
   return { isError: true, content: [{ type: "text" as const, text }] };
 }
 
-function toolOk(payload: unknown) {
-  const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
-  return { content: [{ type: "text" as const, text }] };
-}
-
-async function handleVerifyXrpPaymentWithAuth(args: Record<string, unknown>) {
-  const requestContext = getMcpContext();
-  if (requestContext.http) {
-    const limited = checkVerifyRateLimit(requestContext.clientIp || "unknown", requestContext.apiKey);
-    if (!limited.allowed) {
-      return toolError(`Rate limit exceeded. Retry after ${limited.retryAfterSec}s.`);
-    }
-  }
-  const result = await attestXrpPayment({
-    txHash: args.txHash as string,
-    apiKeyHeader: requestContext.apiKey,
-    apiKeyRecord: requestContext.apiKeyRecord,
-    paymentSignature: requestContext.paymentSignature,
-  });
-
-  if (result.kind === "ok") {
-    const extra =
-      result.body.status === "pending"
-        ? { message: `Submitted to voting round ${result.body.roundId}. Use get_attestation_status in ~90 seconds to check.` }
-        : {};
-    return toolOk({ ...result.body, ...extra });
-  }
-
-  if (result.kind === "payment_required") {
-    return toolError(
-      [
-        result.body.message,
-        "",
-        "This is an x402 Payment Required challenge. Sign an XRPL Payment for one of the accepts entries and retry with a PAYMENT-SIGNATURE header.",
-        "",
-        JSON.stringify(
-          {
-            code: result.body.code,
-            paymentRequired: result.body.paymentRequired,
-            priceUsd: result.body.priceUsd,
-            priceXrp: result.body.priceXrp,
-            priceRlusd: result.body.priceRlusd,
-            limit: result.body.limit,
-            used: result.body.used,
-            resetDate: result.body.resetDate,
-            upgradeUrl: result.body.upgradeUrl,
-          },
-          null,
-          2
-        ),
-        result.body.limit !== undefined ? `\nLimit: ${result.body.limit}` : "",
-        result.body.used !== undefined ? `Used: ${result.body.used}` : "",
-        result.body.resetDate ? `Reset: ${result.body.resetDate}` : "",
-      ].join("\n")
-    );
-  }
-
-  const rawMessage = String(result.body.message || result.body.error || "Request failed");
-  const code = result.body.code || result.body.error;
-  const message =
-    code === "MISSING_API_KEY" || code === "INVALID_API_KEY"
-      ? `API key required. ${rawMessage}`
-      : rawMessage;
-  const extras: string[] = [];
-  if (code) extras.push(`Code: ${code}`);
-  if (result.body.limit !== undefined) extras.push(`Limit: ${result.body.limit}`);
-  if (result.body.used !== undefined) extras.push(`Used: ${result.body.used}`);
-  if (result.body.resetDate) extras.push(`Reset: ${result.body.resetDate}`);
-  return toolError(extras.length ? `${message}\n\n${extras.join("\n")}` : message);
-}
-
 const toolHandlers: Record<string, (args: Record<string, unknown>) => Promise<any>> = {
-  verify_xrp_payment: handleVerifyXrpPaymentWithAuth,
+  verify_xrp_payment: handleVerifyXrpPayment,
   get_attestation_status: handleGetAttestationStatus,
   lookup_attestation_by_tx: handleLookupByTx,
   get_server_info: handleGetServerInfo,

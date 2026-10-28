@@ -1,5 +1,4 @@
 import { config, activeNetwork } from "../config.js";
-import { store } from "../store.js";
 import { whiteLabel } from "../white-label.js";
 import { FDC_XRP_PAYMENT_LUT_LIMIT_SECONDS, FDC_XRP_PAYMENT_LUT_LIMIT_DAYS } from "../xrpl-tx.js";
 import { NETWORK_STATUS_URI } from "../attestation-view.js";
@@ -46,19 +45,14 @@ const templates: ResourceTemplate[] = [
     name: "Live Network Status",
     description: "Real-time server health, wallet balance, and network status",
     handler: async () => {
-      const { ethers } = await import("ethers");
-      const provider = new ethers.providers.JsonRpcProvider(activeNetwork.rpc);
-      let balance = "unknown";
+      const { JsonRpcProvider } = await import("ethers");
+      const provider = new JsonRpcProvider(activeNetwork.rpc);
       let blockNumber = "unknown";
       try {
-        if (config.privateKey) {
-          const wallet = new ethers.Wallet(config.privateKey, provider);
-          balance = ethers.utils.formatEther(await provider.getBalance(wallet.address));
-        }
         blockNumber = (await provider.getBlockNumber()).toString();
-      } catch {}
-      const attestations = await store.listAttestations();
-      const apiKeys = await store.listApiKeys();
+      } catch {
+        /* public RPC may be unavailable */
+      }
       return [
         "# Network Status",
         "",
@@ -67,9 +61,6 @@ const templates: ResourceTemplate[] = [
         `| Status | online |`,
         `| Network | ${config.network} |`,
         `| Block | ${blockNumber} |`,
-        `| Wallet Balance | ${balance} FLR |`,
-        `| Attestations | ${attestations.length} |`,
-        `| API Keys | ${apiKeys.length} |`,
         `| Brand | ${whiteLabel.get().brandName} |`,
         `| Uptime | ${Math.floor(process.uptime())}s |`,
       ].join("\n");
@@ -79,7 +70,7 @@ const templates: ResourceTemplate[] = [
 
 export function getResources(opts?: { includePrivate?: boolean }) {
   const ctx = getMcpContext();
-  const includePrivate = opts?.includePrivate ?? (!ctx.http || Boolean(ctx.apiKeyRecord));
+  const includePrivate = opts?.includePrivate ?? Boolean(ctx.apiKeyRecord);
   return templates
     .filter((t) => includePrivate || t.uri !== NETWORK_STATUS_URI)
     .map((t) => ({
@@ -92,7 +83,7 @@ export function getResources(opts?: { includePrivate?: boolean }) {
 
 export async function readResource(uri: string): Promise<string | null> {
   const ctx = getMcpContext();
-  if (uri === NETWORK_STATUS_URI && ctx.http && !ctx.apiKeyRecord) {
+  if (uri === NETWORK_STATUS_URI && !ctx.apiKeyRecord) {
     return null;
   }
   const t = templates.find((x) => x.uri === uri);

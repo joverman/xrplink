@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, existsSync, mkdirSync } from "fs";
+import { atomicWriteJson, createMutex } from "./file-lock.js";
 
 export interface WhiteLabelConfig {
   brandName: string;
@@ -19,6 +20,7 @@ const defaults: WhiteLabelConfig = {
 };
 
 const PATH = "data/white-label.json";
+const writeLock = createMutex();
 
 class WhiteLabel {
   private config: WhiteLabelConfig;
@@ -30,7 +32,7 @@ class WhiteLabel {
   private load(): WhiteLabelConfig {
     if (!existsSync("data")) mkdirSync("data", { recursive: true });
     if (!existsSync(PATH)) {
-      writeFileSync(PATH, JSON.stringify(defaults, null, 2));
+      atomicWriteJson(PATH, defaults);
       return { ...defaults };
     }
     try {
@@ -46,8 +48,12 @@ class WhiteLabel {
 
   update(updates: Partial<WhiteLabelConfig>): WhiteLabelConfig {
     this.config = { ...this.config, ...updates };
-    writeFileSync(PATH, JSON.stringify(this.config, null, 2));
+    atomicWriteJson(PATH, this.config);
     return this.get();
+  }
+
+  async updateLocked(updates: Partial<WhiteLabelConfig>): Promise<WhiteLabelConfig> {
+    return writeLock(() => this.update(updates));
   }
 
   /** Inline CSS for white-label themed dashboard */

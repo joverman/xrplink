@@ -1,53 +1,41 @@
 # Multi-stage build: compile contracts with devDependencies, then create slim runtime image
+# Pinned to Node 22.23.4 on Alpine 3.24 (uid 1000 `node`, compatible with run.sh --user 1000:1000).
 
 # =============================================================================
 # BUILDER STAGE: Install all deps, compile Solidity contracts
 # =============================================================================
-FROM node:22-alpine AS builder
+FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder
 
 WORKDIR /app
 
-# Install all dependencies (including devDependencies for hardhat)
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Copy contract sources and config needed for compilation
 COPY hardhat.config.ts tsconfig.json ./
 COPY contracts/ ./contracts/
 
-# Compile Solidity contracts to generate artifacts
 RUN npx hardhat compile --quiet
 
 # =============================================================================
 # RUNTIME STAGE: Production image with only runtime dependencies
 # =============================================================================
-FROM node:22-alpine AS runtime
+FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runtime
 
 WORKDIR /app
 
-# Install production dependencies only
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-# Copy compiled contract artifacts from builder
 COPY --from=builder /app/artifacts/ ./artifacts/
 
-# Copy application source and static files
 COPY src/ ./src/
 COPY public/ ./public/
 COPY tsconfig.json ./
 
-# Create non-root user for security
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001 -G nodejs && \
-    mkdir -p /app/data && \
-    chown -R nodejs:nodejs /app
+# Official node image already has uid/gid 1000 (`node`). Prod run.sh uses 1000:1000,
+# a read-only root, and dropped capabilities — keep ownership aligned.
+RUN mkdir -p /app/data && chown -R node:node /app
 
-# Default environment variables (can be overridden at runtime)
-# TRUST_PROXY: Safe default restricts trust to loopback/private ranges.
-# Set to "true" ONLY if your reverse proxy (cloudflared, nginx, etc.) is on
-# the same Docker network AND you trust all containers on that network.
-# See docs/production-hardening.md for details.
 ENV PORT=3000
 ENV HOST=0.0.0.0
 ENV DATA_DIR=/app/data
@@ -56,10 +44,9 @@ ENV TRUST_PROXY=loopback,linklocal,uniquelocal
 
 EXPOSE 3000
 
-# Switch to non-root user
-USER nodejs
+USER node
 
-# Health check for container orchestration
+# Use 127.0.0.1, not localhost — localhost can resolve to IPv6 ::1 and fail in prod.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || exit 1
 
