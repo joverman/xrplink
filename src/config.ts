@@ -6,6 +6,8 @@ export interface NetworkConfig {
   rpc: string;
   chainId: number;
   fdcHub: string;
+  /** Enshrined FDC verification contract (verifyXRPPayment). */
+  fdcVerification: string;
   daLayerUrl: string;
   verifierBaseUrl: string;
   firstVotingRoundStart: number;
@@ -19,6 +21,7 @@ export const networkConfigs: Record<Network, NetworkConfig> = {
     rpc: "https://coston2-api.flare.network/ext/C/rpc",
     chainId: 114,
     fdcHub: "0x48aC463d7975828989331F4De43341627b9c5f1D",
+    fdcVerification: "0x906507E0B64bcD494Db73bd0459d1C667e14B933",
     daLayerUrl: "https://ctn2-data-availability.flare.network",
     verifierBaseUrl: "https://fdc-verifiers-testnet.flare.network",
     firstVotingRoundStart: 1658430000,
@@ -28,6 +31,7 @@ export const networkConfigs: Record<Network, NetworkConfig> = {
     rpc: "https://flare-api.flare.network/ext/C/rpc",
     chainId: 14,
     fdcHub: "0xc25c749DC27Efb1864Cb3DADa8845B7687eB2d44",
+    fdcVerification: "0x9394c7A36b3Da8de1b4F27cdD0a554dA4Fa7132d",
     daLayerUrl: "https://flr-data-availability.flare.network",
     verifierBaseUrl: "https://fdc-verifiers-mainnet.flare.network",
     firstVotingRoundStart: 1658430000,
