@@ -181,6 +181,7 @@ describe("Receipt contract and formatting helpers", () => {
     assert.doesNotMatch(html, />—</);
     assert.doesNotMatch(html, /PaymentVerifierMainnet/);
     assert.match(html, /class="btn btn-primary" id="shareReceipt"/);
+    assert.match(html, /actions \.btn-outline/);
   });
 
   it("print variant drops nav and buttons and uses a white page", async () => {

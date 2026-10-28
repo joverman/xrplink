@@ -101,6 +101,7 @@ function pageShell(opts: {
 <style>
 ${RECEIPT_STYLE}
 ${opts.navCss}
+.actions .btn-outline,a.btn-outline,button.btn-outline{border:1.5px solid #818cf8;background:transparent;color:#818cf8}
 ${opts.extraCss || ""}
 </style></head>
 <body class="${opts.print ? "print-mode" : "site-theme"}">
