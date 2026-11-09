@@ -17,7 +17,7 @@ const templates: ResourceTemplate[] = [
     name: "Project Overview",
     description: "XRPLink project description, purpose, and version information",
     handler: () =>
-      `# XRPLink — XRP Payment Attestation on Flare FDC\n\nXRPLink wraps Flare's enshrined FDC protocol into a simple API + MCP server, letting developers and AI agents verify XRP payments on Flare without managing attestation rounds, Merkle proofs, or DA Layer interactions.\n\n## Version: 0.3.0 (agent-native)\n## Network: ${config.network}\n## Status: Operational\n\nTo get started, call verify_xrp_payment with an XRP transaction hash.`,
+      `# XRPLink — XRP Payment Attestation on Flare FDC\n\nXRPLink wraps Flare's enshrined FDC protocol into a simple API + MCP server, letting developers and AI agents verify XRP payments on Flare without managing attestation rounds, Merkle proofs, or DA Layer interactions.\n\n## Version: 0.3.1 (agent-native)\n## Network: ${config.network}\n## Status: Operational\n\nTo get started, call verify_xrp_payment with an XRP transaction hash.`,
   },
   {
     uri: "xrplink://docs/config",

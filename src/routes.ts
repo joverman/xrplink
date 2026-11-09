@@ -790,7 +790,7 @@ router.get("/openapi.json", (_req: Request, res: Response) => {
     openapi: "3.0.3",
     info: {
       title: "XRPLink API",
-      version: "0.3.0",
+      version: "0.3.1",
       description: "Cryptographically verified XRP payment receipts on the Flare Network. XRPLink uses Flare's Data Connector (FDC) protocol to create on-chain proofs of XRP transactions.",
       contact: { url: baseUrl },
     },
@@ -1036,7 +1036,7 @@ router.get("/.well-known/mcp.json", (_req: Request, res: Response) => {
     description: "Cryptographically verified XRP payment receipts on the Flare Network",
     url: `${baseUrl}/mcp`,
     transport: "streamable-http",
-    version: "0.3.0",
+    version: "0.3.1",
     capabilities: {
       tools: true,
       resources: true,

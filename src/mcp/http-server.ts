@@ -35,7 +35,7 @@ import { runMcpContext, McpRequestContext } from "./context.js";
 import { clientIp } from "../rate-limit.js";
 
 const SERVER_NAME = "xrplink-mcp";
-const SERVER_VERSION = "0.3.0";
+const SERVER_VERSION = "0.3.1";
 
 function toolError(text: string) {
   return { isError: true, content: [{ type: "text" as const, text }] };

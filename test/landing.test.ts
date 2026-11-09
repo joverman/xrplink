@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import http from "node:http";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const INDEX_PATH = join(ROOT, "public", "index.html");
@@ -82,5 +83,105 @@ describe("Landing page pricing helpers", () => {
     const appSrc = readFileSync(APP_PATH, "utf8");
     assert.match(appSrc, /loadPricingHtml/);
     assert.match(appSrc, /app\.get\(\["\/pricing", "\/pricing\.html"\]/);
+  });
+
+  it("links /icon.png as the favicon on public HTML pages", () => {
+    for (const file of ["index.html", "pricing.html"]) {
+      const html = readFileSync(join(ROOT, "public", file), "utf8");
+      assert.match(html, /<link rel="icon" href="\/icon\.png"/);
+    }
+  });
+
+  it("commits a 256x256 PNG at public/icon.png", () => {
+    const buf = readFileSync(join(ROOT, "public", "icon.png"));
+    assert.equal(buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), true);
+    assert.equal(buf.readUInt32BE(16), 256);
+    assert.equal(buf.readUInt32BE(20), 256);
+  });
+
+  it("declares websiteUrl and icons in server.json", () => {
+    const spec = JSON.parse(readFileSync(join(ROOT, "server.json"), "utf8"));
+    assert.equal(spec.$schema, "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json");
+    assert.equal(spec.websiteUrl, "https://xrp-link.com");
+    assert.deepEqual(spec.icons, [
+      {
+        src: "https://xrp-link.com/icon.png",
+        mimeType: "image/png",
+        sizes: ["256x256"],
+      },
+    ]);
+    assert.equal(spec.version, "0.3.1");
+  });
+});
+
+describe("GET /icon.png", () => {
+  process.env.SESSION_SECRET = process.env.SESSION_SECRET || "test-session-secret-32-chars-min!!";
+  process.env.NODE_ENV = process.env.NODE_ENV || "test";
+
+  let server: http.Server | null = null;
+  let port = 0;
+
+  async function startApp(): Promise<void> {
+    const { default: app } = await import("../src/app.js");
+    server = await new Promise<http.Server>((resolve, reject) => {
+      const s = app.listen(0, "127.0.0.1");
+      s.once("error", reject);
+      s.once("listening", () => resolve(s));
+    });
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("test server did not bind");
+    port = addr.port;
+  }
+
+  async function stopApp(): Promise<void> {
+    if (!server) return;
+    if (typeof server.closeAllConnections === "function") server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => {
+      server!.close((err) => (err ? reject(err) : resolve()));
+    });
+    server = null;
+  }
+
+  function get(path: string): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          method: "GET",
+          hostname: "127.0.0.1",
+          port,
+          path,
+          agent: new http.Agent({ keepAlive: false }),
+          headers: { Connection: "close" },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+          res.on("end", () => {
+            resolve({ status: res.statusCode!, headers: res.headers, body: Buffer.concat(chunks) });
+          });
+        }
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  it("serves icon.png as image/png and favicon.ico without 404", async () => {
+    await startApp();
+    try {
+      const icon = await get("/icon.png");
+      assert.equal(icon.status, 200);
+      assert.match(String(icon.headers["content-type"]), /^image\/png\b/i);
+      assert.equal(
+        icon.body.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+        true
+      );
+
+      const favicon = await get("/favicon.ico");
+      assert.equal(favicon.status, 200);
+      assert.ok(favicon.body.length > 0);
+    } finally {
+      await stopApp();
+    }
   });
 });
