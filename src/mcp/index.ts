@@ -23,7 +23,7 @@ const toolHandlers: Record<string, (args: Record<string, unknown>) => Promise<an
 };
 
 const SERVER_NAME = "xrplink-mcp";
-const SERVER_VERSION = "0.3.0";
+const SERVER_VERSION = "0.3.1";
 
 async function stdioContext(): Promise<McpRequestContext> {
   const envKey = (process.env.MCP_API_KEY || "").trim();

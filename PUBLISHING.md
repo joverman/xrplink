@@ -58,4 +58,12 @@ mcp-publisher validate
 mcp-publisher publish
 ```
 
-Do not run `mcp-publisher publish` until `/mcp` is reachable at `https://xrp-link.com/mcp` and initialize/tools/list succeed without HTTP 403.
+Do not run `mcp-publisher publish` until:
+
+1. `/mcp` is reachable at `https://xrp-link.com/mcp` and initialize/tools/list succeed without HTTP 403.
+2. The registry icon is live on production. `server.json` points at `https://xrp-link.com/icon.png`; republishing before that deploy leaves the listing with a 404 icon.
+
+```bash
+curl -sI https://xrp-link.com/icon.png
+# Expect HTTP 200 and Content-Type: image/png
+```

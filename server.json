@@ -7,7 +7,15 @@
     "url": "https://github.com/joverman/xrplink",
     "source": "github"
   },
-  "version": "0.3.0",
+  "version": "0.3.1",
+  "websiteUrl": "https://xrp-link.com",
+  "icons": [
+    {
+      "src": "https://xrp-link.com/icon.png",
+      "mimeType": "image/png",
+      "sizes": ["256x256"]
+    }
+  ],
   "remotes": [
     {
       "type": "streamable-http",
